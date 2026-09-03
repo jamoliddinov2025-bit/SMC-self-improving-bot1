@@ -27,7 +27,7 @@ src/
   main.py              # entry point (paper demo, no strategy)
   data/                # market-data interface + local CSV replay provider
   strategy/            # SMC logic: BOS, CHoCH, liquidity, order blocks, FVG
-  indicators/          # EMA, ATR, volume
+  indicators/          # EMA, ATR, volume + IndicatorEngine (pure functions, no signals)
   risk/                # position sizing and risk limits
   execution/           # PaperBroker (simulated spot broker) and trade history
   backtesting/         # backtest engine and performance metrics
@@ -53,7 +53,7 @@ pytest
 |-------|------|--------|
 | 0 | Project scaffold and configuration | ✅ done |
 | 1 | Market data (CSV replay provider) + PaperBroker | ✅ done |
-| 2 | Indicators: EMA, ATR, volume | planned |
+| 2 | Indicators: EMA, ATR, volume | ✅ done |
 | 3 | SMC market structure: swing points, BOS, CHoCH | planned |
 | 4 | Liquidity sweeps, order blocks, fair value gaps | planned |
 | 5 | Signal generation (entry / stop / target) | planned |

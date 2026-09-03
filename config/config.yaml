@@ -31,12 +31,13 @@ strategy:
 
 indicators:
   ema:
-    fast: 50
+    periods: [20, 50, 200]      # every EMA computed by the indicator engine
+    fast: 50                    # aliases used later by the strategy (must be in `periods`)
     slow: 200
   atr:
-    period: 14
+    period: 14                  # Wilder ATR
   volume:
-    ma_period: 20
+    ma_period: 20               # simple moving average of volume
     spike_multiplier: 1.5
 
 risk:
