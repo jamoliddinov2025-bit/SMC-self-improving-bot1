@@ -28,7 +28,7 @@ src/
   data/                # market-data interface + local CSV replay provider
   strategy/            # SMCEngine: swings, BOS, CHoCH, sweeps, FVG, order blocks (analysis only, no signals)
   indicators/          # EMA, ATR, volume + IndicatorEngine (pure functions, no signals)
-  risk/                # position sizing and risk limits
+  risk/                # position sizing, TradeValidator (kill switches), RiskState
   execution/           # PaperBroker (simulated spot broker) and trade history
   backtesting/         # backtest engine and performance metrics
   improvement/         # controlled parameter improvement
@@ -57,9 +57,17 @@ pytest
 | 3 | SMC market structure: swing points, BOS, CHoCH | ✅ done |
 | 4 | Liquidity sweeps, order blocks, fair value gaps | ✅ done |
 | 5 | Signal generation (entry / stop / target) | planned |
-| 6 | Risk management module | planned |
+| 6 | Risk management module | ✅ done |
 | 7 | Backtesting engine + performance evaluation | planned |
 | 8 | Paper-trading loop (strategy + broker) + trade logging | planned |
 | 9 | Controlled strategy improvement (bounded parameter changes, manual approval) | planned |
+
+## Known limitations
+
+- **Loss-streak lock has no automatic unlock yet.** When `consecutive_losses >= risk.max_consecutive_losses`
+  the `TradeValidator` rejects all new trades. Since only a winning trade resets the streak and no trade can be
+  opened while locked, the lock would otherwise be permanent. The explicit extension point is
+  `RiskState.reset_loss_streak(reason)`; a cooldown-based unlock (time/bars since last loss) is planned for a
+  later stage and will call this hook. Until then the reset is manual. A new day does **not** clear the streak.
 
 Live trading is intentionally out of scope.

@@ -40,9 +40,11 @@ indicators:
 
 risk:
   starting_balance: 10000       # paper balance in quote currency (USDT)
-  risk_per_trade_pct: 1.0       # % of balance risked per trade
-  max_open_positions: 1
-  max_daily_loss_pct: 3.0
+  risk_per_trade_pct: 1.0       # % of equity risked per trade
+  max_daily_loss_pct: 3.0       # kill switch: no new trades once today's loss exceeds this
+  max_drawdown_pct: 10.0        # kill switch: no new trades once drawdown from peak exceeds this
+  max_consecutive_losses: 5     # kill switch: no new trades after this many losses in a row
+  max_open_positions: 1         # spot, one position at a time
   min_risk_reward: 2.0
   stop_loss_atr_multiplier: 1.5
 
