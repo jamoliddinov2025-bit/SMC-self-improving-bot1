@@ -3,9 +3,10 @@
 PAPER TRADING ONLY. This does not connect to any exchange.
 
     python src/main.py            broker demo: replay candles, fixed buy-then-sell
-    python src/main.py backtest   run the backtest engine on the local sample CSV
-                                  using FixedIntervalTestStrategy (a TEST FIXTURE,
-                                  not a trading strategy - results are meaningless)
+    python src/main.py backtest [--strategy smc|fixture] [--no-usdtd]
+                                  run the backtest engine on the local SYNTHETIC sample
+                                  CSVs. 'fixture' = FixedIntervalTestStrategy (plumbing
+                                  only). Results on synthetic data are meaningless.
 """
 
 import sys
@@ -19,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 from src.backtesting import BacktestEngine, FixedIntervalTestStrategy  # noqa: E402
 from src.data import CSVMarketData  # noqa: E402
 from src.execution import PaperBroker  # noqa: E402
+from src.strategy.smc_strategy import SMCStrategy  # noqa: E402
 
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 ALLOWED_MODES = {"paper", "backtest"}
@@ -57,23 +59,43 @@ def run_demo(config: dict, bars: int = 20) -> dict:
     return {"broker": broker, "candles": candles, "last_price": last.close}
 
 
-def run_backtest(config: dict):
-    """Deterministic sample backtest with the fixture strategy (plumbing check only)."""
+def build_strategy(config: dict, name: str):
+    if name == "smc":
+        return SMCStrategy.from_config(config)
+    if name == "fixture":
+        return FixedIntervalTestStrategy.from_config(config)
+    raise ValueError(f"unknown strategy {name!r} (smc | fixture)")
+
+
+def run_backtest(config: dict, strategy_name: str = None):
+    """Deterministic sample backtest on synthetic data (plumbing check only). Returns (result, strategy)."""
+    name = strategy_name or config.get("backtesting", {}).get("strategy", "fixture")
     data = CSVMarketData(directory=ROOT / config["data"]["directory"])
-    engine = BacktestEngine.from_config(config, FixedIntervalTestStrategy.from_config(config), run_id="sample_demo")
+    strategy = build_strategy(config, name)
+    engine = BacktestEngine.from_config(config, strategy, run_id=f"sample_{name}", data_root=ROOT)
     result = engine.run_provider(data)
     if config.get("backtesting", {}).get("save_results"):
         result.save(ROOT / config["backtesting"]["results_directory"])
-    return result
+    return result, strategy
 
 
 def main() -> None:
     config = load_config()
     if len(sys.argv) > 1 and sys.argv[1] == "backtest":
-        print("SMC Self-Improving Bot - backtest (FixedIntervalTestStrategy fixture, synthetic data)")
-        print("NOTE: synthetic sample data + fixture strategy; numbers are NOT trading performance.")
-        result = run_backtest(config)
+        args = sys.argv[2:]
+        name = args[args.index("--strategy") + 1] if "--strategy" in args else None
+        if "--no-usdtd" in args:
+            config.setdefault("usdtd", {})["enabled"] = False
+        name = name or config.get("backtesting", {}).get("strategy", "fixture")
+        usdtd_on = bool(config.get("usdtd", {}).get("enabled", False))
+        print(f"SMC Self-Improving Bot - backtest  strategy={name}  usdtd={'on' if usdtd_on else 'off'}")
+        print("NOTE: SYNTHETIC sample data; numbers are NOT trading performance.")
+        result, strategy = run_backtest(config, name)
         print(result.format_summary())
+        if hasattr(strategy, "diag"):
+            d = strategy.diag
+            print(f"  strategy diag   : setups={d.setups_armed} buys={d.buy_signals} exits={d.exit_signals} "
+                  f"riskoff_skips={d.riskoff_skips} gate_failures={d.gate_failures}")
         return
     print("SMC Self-Improving Bot - paper demo (no strategy)")
     print(f"  mode      : {config['mode']}")

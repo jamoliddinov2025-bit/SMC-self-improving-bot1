@@ -11,6 +11,7 @@ data/*
 !data/.gitkeep
 !data/sample/
 !data/sample/*.csv
+!data/sample/README.md
 
 # Secrets - never commit keys (none are used in paper mode anyway)
 .env

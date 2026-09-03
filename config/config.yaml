@@ -26,6 +26,49 @@ strategy:
   fair_value_gaps:
     enabled: true
     min_gap_pct: 0.0           # 0 = pure 3-candle definition; >0 filters tiny gaps
+  # ---- SMCStrategy (long-only spot). SMC is primary; indicators are confirmation only.
+  entry:
+    setup_max_age_bars: 60         # a bullish BOS older than this no longer arms a setup
+    choch_age_multiplier: 1.5      # CHoCH-origin setups may age this much longer
+    poi_priority: [order_block, fvg]
+    poi_max_atr_multiple: 3.0      # ignore zones taller than this many ATR
+    require_rejection: true        # need D1/D2/D3 rejection on the touch candle
+    rejection_close_position_min: 0.5
+    max_entries_per_setup: 1
+    reentry_cooldown_bars: 3
+  filters:
+    ema_trend: {enabled: true}                        # close > EMA200 and EMA50 > EMA200
+    ema_extension: {enabled: true, atr_multiple: 1.0} # close <= EMA20 + k*ATR
+    volume: {enabled: true, ratio_min: 0.8, bos_ratio_min: 1.2}
+  stops:
+    buffer_atr: 0.25
+    min_stop_atr: 0.5
+    max_stop_atr: 3.0
+  targets:
+    mode: structure                # structure | fixed_rr | hybrid
+    fixed_rr: 2.0
+  exits:
+    exit_on_bearish_choch: true
+    max_bars_in_trade: 96          # time stop if not >= 1R in profit after this many bars
+
+# USDT dominance regime filter - OPTIONAL. Hypothesis only; every effect is switchable.
+# It can only TIGHTEN strategy gates in a RISING regime; it never touches the Risk Engine.
+usdtd:
+  enabled: true
+  symbol: USDT.D                   # file: <data.directory>/USDTD_<timeframe>.csv (timestamp, close)
+  timeframe: 4h
+  ema_fast: 20
+  ema_slow: 50
+  slope_lookback: 6
+  roc_lookback: 12
+  slope_threshold_pct: 0.10
+  roc_threshold_pct: 0.50
+  confirm_bars: 2
+  risk_off:
+    min_confluence_score: 2
+    rr_add: 0.5
+    vol_ratio_min: 1.0
+    require_deeper_poi: true
 
 indicators:
   ema:
@@ -65,6 +108,7 @@ backtesting:
   slippage_on_stops: true           # apply execution.slippage_pct to stop-loss fills (adverse)
   slippage_on_targets: false        # take-profit fills are treated as limit fills (no slippage)
   close_open_position_at_end: true  # force-close at the last close, flagged 'end_of_data'
+  strategy: smc                     # smc | fixture   (python src/main.py backtest [--strategy X])
   demo_strategy:                    # FixedIntervalTestStrategy - a TEST FIXTURE, not a trading strategy
     interval_bars: 25
     stop_atr_multiplier: 1.5

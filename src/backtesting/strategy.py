@@ -7,12 +7,15 @@ at bar i, and the account snapshot. That is the anti-lookahead boundary.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol
 
 import pandas as pd
 
 from src.data.base import Candle
 from src.strategy.smc_types import SMCResult
+
+if TYPE_CHECKING:  # avoid import cycles at runtime
+    from src.strategy.regime import RegimeState
 
 BUY = "buy"
 EXIT = "exit"
@@ -41,6 +44,7 @@ class BacktestContext:
     has_position: bool
     equity: float                 # mark-to-market at bar i close
     risk: Dict[str, Any]          # RiskState.snapshot()
+    regime: Optional["RegimeState"] = None   # USDT.D regime as of the last CLOSED aux candle (None if unused)
 
 
 class Strategy(Protocol):
