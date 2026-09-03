@@ -1,1 +1,63 @@
-# SMC-self-improving-bot1
+# SMC Self-Improving Bot
+
+A simple automated cryptocurrency **spot** trading bot based on Smart Money Concepts (SMC),
+with strict risk management, backtesting, paper trading, and controlled strategy improvement.
+
+> **PAPER TRADING ONLY.** This project does not connect to a real exchange, does not use
+> real API keys, and does not implement live trading. `mode` in the config only accepts
+> `paper` or `backtest`.
+
+## Planned strategy components
+
+- **SMC (primary strategy)**: Break of Structure (BOS), Change of Character (CHoCH),
+  liquidity sweeps, order blocks, fair value gaps (FVG)
+- **Indicators (filters/confirmation)**: EMA, ATR, volume
+- **Risk management**: fixed % risk per trade, ATR-based stops, minimum R:R, daily loss limit
+- **Backtesting** and **paper trading** with full trade logging
+- **Performance evaluation** and **controlled strategy improvement**
+
+## Project structure
+
+```
+config/
+  config.yaml          # all bot settings (paper mode only)
+data/                  # market data, trade logs, backtest results (git-ignored)
+src/
+  main.py              # entry point
+  strategy/            # SMC logic: BOS, CHoCH, liquidity, order blocks, FVG
+  indicators/          # EMA, ATR, volume
+  risk/                # position sizing and risk limits
+  execution/           # paper-trading engine and trade logging
+  backtesting/         # backtest engine and performance metrics
+  improvement/         # controlled parameter improvement
+tests/
+requirements.txt
+README.md
+.gitignore
+```
+
+## Getting started
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python src/main.py
+pytest
+```
+
+## Development stages
+
+| Stage | Goal | Status |
+|-------|------|--------|
+| 0 | Project scaffold and configuration | ✅ done |
+| 1 | Data loading (historical OHLCV to `data/`) | planned |
+| 2 | Indicators: EMA, ATR, volume | planned |
+| 3 | SMC market structure: swing points, BOS, CHoCH | planned |
+| 4 | Liquidity sweeps, order blocks, fair value gaps | planned |
+| 5 | Signal generation (entry / stop / target) | planned |
+| 6 | Risk management module | planned |
+| 7 | Backtesting engine + performance evaluation | planned |
+| 8 | Paper-trading execution + trade logging | planned |
+| 9 | Controlled strategy improvement (bounded parameter changes, manual approval) | planned |
+
+Live trading is intentionally out of scope.

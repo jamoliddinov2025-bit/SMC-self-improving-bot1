@@ -1,0 +1,68 @@
+# SMC Self-Improving Bot - configuration
+# PAPER TRADING ONLY. No real exchange connection, no real API keys.
+
+mode: paper            # allowed: paper | backtest  (live is intentionally NOT supported)
+
+market:
+  exchange: binance    # data source name only (used for historical/public data later)
+  symbol: BTC/USDT
+  timeframe: 15m
+  higher_timeframe: 4h
+
+data:
+  directory: data/
+  history_bars: 5000
+
+strategy:
+  name: smc
+  structure:
+    swing_lookback: 5          # bars each side to confirm a swing high/low
+    bos_enabled: true
+    choch_enabled: true
+  liquidity:
+    sweep_enabled: true
+    equal_level_tolerance_pct: 0.05
+  order_blocks:
+    enabled: true
+    max_age_bars: 100
+  fair_value_gaps:
+    enabled: true
+    min_gap_pct: 0.1
+
+indicators:
+  ema:
+    fast: 50
+    slow: 200
+  atr:
+    period: 14
+  volume:
+    ma_period: 20
+    spike_multiplier: 1.5
+
+risk:
+  starting_balance: 10000       # paper balance in quote currency (USDT)
+  risk_per_trade_pct: 1.0       # % of balance risked per trade
+  max_open_positions: 1
+  max_daily_loss_pct: 3.0
+  min_risk_reward: 2.0
+  stop_loss_atr_multiplier: 1.5
+
+execution:
+  paper_fee_pct: 0.1
+  slippage_pct: 0.02
+  trade_log: data/trades.csv
+
+backtesting:
+  start_date: "2024-01-01"
+  end_date: "2024-12-31"
+  results_directory: data/backtests/
+
+improvement:
+  enabled: false                # controlled, manual-approval-only for now
+  evaluation_window_trades: 50
+  min_trades_before_change: 100
+  max_parameter_change_pct: 10
+
+logging:
+  level: INFO
+  file: data/bot.log

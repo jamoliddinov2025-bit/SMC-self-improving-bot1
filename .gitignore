@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Data, logs and generated results (keep the folder, not the contents)
+data/*
+!data/.gitkeep
+
+# Secrets - never commit keys (none are used in paper mode anyway)
+.env
+*.key
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
