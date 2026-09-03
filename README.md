@@ -21,13 +21,15 @@ with strict risk management, backtesting, paper trading, and controlled strategy
 ```
 config/
   config.yaml          # all bot settings (paper mode only)
-data/                  # market data, trade logs, backtest results (git-ignored)
+data/
+  sample/              # bundled offline CSV replay data (BTCUSDT_15m.csv)
 src/
-  main.py              # entry point
+  main.py              # entry point (paper demo, no strategy)
+  data/                # market-data interface + local CSV replay provider
   strategy/            # SMC logic: BOS, CHoCH, liquidity, order blocks, FVG
   indicators/          # EMA, ATR, volume
   risk/                # position sizing and risk limits
-  execution/           # paper-trading engine and trade logging
+  execution/           # PaperBroker (simulated spot broker) and trade history
   backtesting/         # backtest engine and performance metrics
   improvement/         # controlled parameter improvement
 tests/
@@ -50,14 +52,14 @@ pytest
 | Stage | Goal | Status |
 |-------|------|--------|
 | 0 | Project scaffold and configuration | ✅ done |
-| 1 | Data loading (historical OHLCV to `data/`) | planned |
+| 1 | Market data (CSV replay provider) + PaperBroker | ✅ done |
 | 2 | Indicators: EMA, ATR, volume | planned |
 | 3 | SMC market structure: swing points, BOS, CHoCH | planned |
 | 4 | Liquidity sweeps, order blocks, fair value gaps | planned |
 | 5 | Signal generation (entry / stop / target) | planned |
 | 6 | Risk management module | planned |
 | 7 | Backtesting engine + performance evaluation | planned |
-| 8 | Paper-trading execution + trade logging | planned |
+| 8 | Paper-trading loop (strategy + broker) + trade logging | planned |
 | 9 | Controlled strategy improvement (bounded parameter changes, manual approval) | planned |
 
 Live trading is intentionally out of scope.

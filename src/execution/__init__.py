@@ -1,4 +1,5 @@
-"""Paper-trading execution engine and trade logging.
+"""Paper-trading execution layer."""
 
-Not implemented yet - see README development stages.
-"""
+from src.execution.paper_broker import InsufficientFunds, InsufficientPosition, PaperBroker, Trade
+
+__all__ = ["PaperBroker", "Trade", "InsufficientFunds", "InsufficientPosition"]

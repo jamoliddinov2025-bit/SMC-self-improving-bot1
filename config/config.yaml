@@ -10,7 +10,7 @@ market:
   higher_timeframe: 4h
 
 data:
-  directory: data/
+  directory: data/sample/      # local CSV replay files: <SYMBOL>_<timeframe>.csv
   history_bars: 5000
 
 strategy:
