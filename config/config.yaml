@@ -54,9 +54,21 @@ execution:
   trade_log: data/trades.csv
 
 backtesting:
-  start_date: "2024-01-01"
-  end_date: "2024-12-31"
+  start_date: null                  # optional ISO date filter (null = from first candle)
+  end_date: null                    # optional ISO date filter (null = to last candle)
   results_directory: data/backtests/
+  save_results: false               # write trades.csv / equity_curve.csv / summary.json per run
+  entry_fill: next_open             # next_open | same_close  (when an entry signal is filled)
+  stop_first_on_conflict: true      # stop and target in the same candle -> assume stop hit (pessimistic)
+  gap_fill_at_open: true            # candle opens beyond the stop -> fill at open, not at stop price
+  slippage_on_entries: true         # apply execution.slippage_pct to entry fills (adverse)
+  slippage_on_stops: true           # apply execution.slippage_pct to stop-loss fills (adverse)
+  slippage_on_targets: false        # take-profit fills are treated as limit fills (no slippage)
+  close_open_position_at_end: true  # force-close at the last close, flagged 'end_of_data'
+  demo_strategy:                    # FixedIntervalTestStrategy - a TEST FIXTURE, not a trading strategy
+    interval_bars: 25
+    stop_atr_multiplier: 1.5
+    risk_reward: 2.0
 
 improvement:
   enabled: false                # controlled, manual-approval-only for now

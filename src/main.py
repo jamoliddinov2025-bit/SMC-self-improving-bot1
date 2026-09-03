@@ -1,8 +1,11 @@
 """SMC Self-Improving Bot - entry point.
 
 PAPER TRADING ONLY. This does not connect to any exchange.
-The demo below contains NO trading strategy: it only replays local CSV candles
-through the PaperBroker with a fixed buy-then-sell to prove the plumbing works.
+
+    python src/main.py            broker demo: replay candles, fixed buy-then-sell
+    python src/main.py backtest   run the backtest engine on the local sample CSV
+                                  using FixedIntervalTestStrategy (a TEST FIXTURE,
+                                  not a trading strategy - results are meaningless)
 """
 
 import sys
@@ -13,6 +16,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src.backtesting import BacktestEngine, FixedIntervalTestStrategy  # noqa: E402
 from src.data import CSVMarketData  # noqa: E402
 from src.execution import PaperBroker  # noqa: E402
 
@@ -53,8 +57,24 @@ def run_demo(config: dict, bars: int = 20) -> dict:
     return {"broker": broker, "candles": candles, "last_price": last.close}
 
 
+def run_backtest(config: dict):
+    """Deterministic sample backtest with the fixture strategy (plumbing check only)."""
+    data = CSVMarketData(directory=ROOT / config["data"]["directory"])
+    engine = BacktestEngine.from_config(config, FixedIntervalTestStrategy.from_config(config), run_id="sample_demo")
+    result = engine.run_provider(data)
+    if config.get("backtesting", {}).get("save_results"):
+        result.save(ROOT / config["backtesting"]["results_directory"])
+    return result
+
+
 def main() -> None:
     config = load_config()
+    if len(sys.argv) > 1 and sys.argv[1] == "backtest":
+        print("SMC Self-Improving Bot - backtest (FixedIntervalTestStrategy fixture, synthetic data)")
+        print("NOTE: synthetic sample data + fixture strategy; numbers are NOT trading performance.")
+        result = run_backtest(config)
+        print(result.format_summary())
+        return
     print("SMC Self-Improving Bot - paper demo (no strategy)")
     print(f"  mode      : {config['mode']}")
     print(f"  symbol    : {config['market']['symbol']}")

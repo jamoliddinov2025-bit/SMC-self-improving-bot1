@@ -30,7 +30,7 @@ src/
   indicators/          # EMA, ATR, volume + IndicatorEngine (pure functions, no signals)
   risk/                # position sizing, TradeValidator (kill switches), RiskState
   execution/           # PaperBroker (simulated spot broker) and trade history
-  backtesting/         # backtest engine and performance metrics
+  backtesting/         # point-in-time BacktestEngine, Strategy protocol, journal, metrics
   improvement/         # controlled parameter improvement
 tests/
 requirements.txt
@@ -43,22 +43,34 @@ README.md
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python src/main.py
+python src/main.py            # broker plumbing demo
+python src/main.py backtest   # backtest engine demo on the sample CSV (fixture strategy)
 pytest
 ```
 
+### Backtesting
+
+`BacktestEngine` replays candles strictly one at a time: entries fill at the **next candle open**
+(+ slippage), stops fill at the stop price (or the open on a gap), targets fill without slippage, and a
+stop+target conflict in one candle is resolved **stop-first**. All of this is configurable under
+`backtesting:` in `config/config.yaml`. Proposals pass through the Risk Engine before `PaperBroker`
+executes them; every rejection is journaled. Strategies implement `on_candle(ctx) -> Signal | None` and
+only ever see the current bar's indicators and SMC events already confirmed by that bar.
+
+> `python src/main.py backtest` uses `FixedIntervalTestStrategy`, a **test fixture** with no edge, on
+> **synthetic** sample data. Its output verifies the pipeline and says nothing about trading performance.
+
 ## Development stages
 
-| Stage | Goal | Status |
-|-------|------|--------|
-| 0 | Project scaffold and configuration | ✅ done |
-| 1 | Market data (CSV replay provider) + PaperBroker | ✅ done |
-| 2 | Indicators: EMA, ATR, volume | ✅ done |
-| 3 | SMC market structure: swing points, BOS, CHoCH | ✅ done |
-| 4 | Liquidity sweeps, order blocks, fair value gaps | ✅ done |
-| 5 | Signal generation (entry / stop / target) | planned |
-| 6 | Risk management module | ✅ done |
-| 7 | Backtesting engine + performance evaluation | planned |
+| Step | Goal | Status |
+|------|------|--------|
+| 1 | Project scaffold and configuration | ✅ done |
+| 2 | Market data (CSV replay provider) + PaperBroker | ✅ done |
+| 3 | Indicator engine: EMA, ATR, volume | ✅ done |
+| 4 | SMC market-structure engine: swings, BOS, CHoCH, liquidity sweeps, FVGs, order blocks (analysis only) | ✅ done |
+| 5 | Risk engine: position sizing, trade validator, kill switches, risk state | ✅ done |
+| 6 | Backtesting engine + performance evaluation (fixture strategy only) | ✅ done |
+| 7 | SMC trading strategy: signal generation (entry / stop / target) | planned |
 | 8 | Paper-trading loop (strategy + broker) + trade logging | planned |
 | 9 | Controlled strategy improvement (bounded parameter changes, manual approval) | planned |
 
