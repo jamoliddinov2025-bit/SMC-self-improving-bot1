@@ -16,18 +16,16 @@ data:
 strategy:
   name: smc
   structure:
-    swing_lookback: 5          # bars each side to confirm a swing high/low
-    bos_enabled: true
-    choch_enabled: true
+    pivot_strength: 3          # N candles each side; a pivot at i is only KNOWN at i+N
+    break_on: close            # BOS break condition (only 'close' supported)
   liquidity:
     sweep_enabled: true
-    equal_level_tolerance_pct: 0.05
   order_blocks:
     enabled: true
-    max_age_bars: 100
+    max_age_bars: 100          # reserved for later strategy use (not used by the detector)
   fair_value_gaps:
     enabled: true
-    min_gap_pct: 0.1
+    min_gap_pct: 0.0           # 0 = pure 3-candle definition; >0 filters tiny gaps
 
 indicators:
   ema:
