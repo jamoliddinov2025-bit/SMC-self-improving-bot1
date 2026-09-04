@@ -124,6 +124,9 @@ class PaperTrader:
                                      lambda: SMCEngine.from_config(config), self.validator, run_id="paper",
                                      aux_feeds=self.aux_feeds)
         self.config_hash = config_hash(config)
+        # additive metadata only (Step 10): which frozen dataset (if any) config.data.directory points at.
+        # Never read back, never affects resume/validation/execution.
+        self.dataset_info = _dataset_identity(root / config.get("data", {}).get("directory", "data"))
 
         self.store = StateStore(self.state_dir / "state.json")
         self.history_path = self.state_dir / "history.csv"
@@ -282,6 +285,7 @@ class PaperTrader:
             },
             "strategy": _shift_strategy_snapshot(strat, self.index_shift) if strat else None,
             "halted": self.halted, "halt_reason": self.halt_reason,
+            "dataset": self.dataset_info,
         }
 
     def _save_state(self) -> None:
@@ -569,6 +573,15 @@ def _frame(history: List[Candle]) -> pd.DataFrame:
         "high": [c.high for c in history], "low": [c.low for c in history],
         "close": [c.close for c in history], "volume": [c.volume for c in history],
     })
+
+
+def _dataset_identity(directory) -> Optional[Dict[str, Any]]:
+    """{'dataset_id','dataset_sha256','synthetic'} when `directory` holds a manifest.json, else None."""
+    try:
+        from src.data.dataset import dataset_identity
+        return dataset_identity(directory)
+    except Exception:  # noqa: BLE001 - metadata must never break the trader
+        return None
 
 
 def _shift_strategy_snapshot(snap: Dict[str, Any], shift: int) -> Dict[str, Any]:

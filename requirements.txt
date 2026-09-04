@@ -2,3 +2,6 @@ pandas>=2.0
 numpy>=1.24
 pyyaml>=6.0
 pytest>=7.0
+# Optional - ONLY for `python src/main.py data download|update` with a ccxt: source (public market-data
+# endpoints, no API keys). Backtest, paper, improve and the whole test suite run without it.
+# ccxt>=4.0

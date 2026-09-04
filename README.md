@@ -23,9 +23,11 @@ config/
   config.yaml          # all bot settings (paper mode only)
 data/
   sample/              # SYNTHETIC offline data: BTCUSDT_15m.csv, USDTD_4h.csv (see data/sample/README.md)
+  history/             # REAL downloaded series + frozen datasets (git-ignored; see data/history/README.md)
 src/
-  main.py              # entry point: demo | backtest | paper
-  data/                # market-data interface + local CSV replay provider
+  main.py              # entry point: demo | backtest | paper | improve | proposal | data
+  data/                # market-data interface, CSV replay provider, historical pipeline (validate, dataset, cli)
+  data/fetch/          # the ONLY network code: public ccxt OHLCV source + local-file import + downloader
   strategy/            # SMCEngine (structure analysis), POI logic, USDT.D regime, SMCStrategy (signals)
   indicators/          # EMA, ATR, volume + IndicatorEngine (pure functions, no signals)
   risk/                # position sizing, TradeValidator (kill switches), RiskState
@@ -49,6 +51,7 @@ python src/main.py paper [--reset] [--candles N] [--strategy smc|fixture] [--no-
 python src/main.py improve [--dry-run] [--max-candidates N]   # offline improvement analysis (needs improvement.enabled)
 python src/main.py proposal show P-1                          # read-only
 python src/main.py proposal apply P-1 --confirm P-1           # writes config/config.proposed.P-1.yaml only
+python src/main.py data list|download|update|validate|inspect|export   # real historical data pipeline
 pytest
 ```
 
@@ -169,6 +172,39 @@ Applying a proposal is a separate manual step: `proposal show` prints the overla
 nothing; `proposal apply <id> --confirm <id>` requires the exact ID twice, refuses if `config.yaml` changed since
 the run, and writes **only** `config/config.proposed.<id>.yaml` for you to review and copy by hand.
 
+### Real historical data (`python src/main.py data ...`)
+
+The bot ships with a synthetic sample so everything runs offline; real market data is brought in through a
+small pipeline that keeps every consumer unchanged: a **dataset is just a directory** with the canonical
+file names (`BTCUSDT_15m.csv[.gz]`, `USDTD_4h.csv[.gz]`) plus a `manifest.json`, so `data.directory` can
+point at it and `BacktestEngine`, `PaperTrader` and the improvement framework read it through the same
+`CSVMarketData` / `build_aux_feeds` path as before.
+
+```bash
+pip install ccxt                                                # optional, download/update only
+python src/main.py data download --symbol BTC/USDT --timeframe 15m --from 2020-01-01   # public ccxt OHLCV
+python src/main.py data download --symbol USDT.D --timeframe 4h --kind close \
+                                 --source file:/path/usdt_dominance_4h.csv --from 2020-01-01   # v1: file import
+python src/main.py data update                                  # incremental, re-pulls an overlap, refuses revisions
+python src/main.py data validate                                # V1-V10 report (gaps, dupes, order, tz, OHLC, ...)
+python src/main.py data inspect                                 # ranges, hashes, aux alignment preview
+python src/main.py data export --dataset btc-15m-2020-2025      # frozen, hash-pinned data/history/datasets/<id>/
+# then set  data.directory: data/history/datasets/btc-15m-2020-2025/  in config/config.yaml
+```
+
+- **Sources**: `ccxt:<exchange>` (default `binance`; any ccxt id such as `bybit`/`okx` works — one series comes
+  from one source, no aggregation) and `file:<path>` for offline imports. Only `load_markets` and `fetch_ohlcv`
+  (public market-data endpoints) are ever called; API keys/secrets are refused and no environment variables
+  are read. Network code lives exclusively in `src/data/fetch/` and is only reachable from the `data` command.
+- **USDT.D** has no public OHLCV endpoint: v1 imports a CSV (`timestamp,close`) through the same pipeline.
+- **Quality**: gaps, duplicates (incl. conflicting), out-of-order rows, naive/off-grid timestamps, OHLC
+  violations, outliers, unclosed last candle, hash mismatches — reported in `validation.json/.md`. Gaps are
+  **never filled**.
+- **Reproducibility**: `manifest.json` pins every file's sha256 and a `dataset_sha256`; loading a tampered
+  dataset is refused, the improvement report quotes the dataset id/hash, and the paper-trader `state.json`
+  records it as additive metadata (behaviour unchanged).
+- Storage stays CSV (gzip for datasets); no Parquet, no database.
+
 ## Development stages
 
 | Step | Goal | Status |
@@ -182,6 +218,7 @@ the run, and writes **only** `config/config.proposed.<id>.yaml` for you to revie
 | 7 | SMC trading strategy (long-only) + optional USDT.D regime filter | ✅ done |
 | 8 | Paper-trading loop (replay-driven, resumable) + per-candle logging + generic aux feeds | ✅ done |
 | 9 | Controlled improvement framework (offline walk-forward parameter analysis, ranked proposals, manual approval) | ✅ done |
+| 10 | Real historical data pipeline (public ccxt download, validation, hash-pinned datasets, file import for USDT.D) | ✅ done |
 
 ## Known limitations
 

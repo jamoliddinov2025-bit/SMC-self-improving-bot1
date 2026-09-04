@@ -10,8 +10,24 @@ market:
   higher_timeframe: 4h
 
 data:
-  directory: data/sample/      # local CSV replay files: <SYMBOL>_<timeframe>.csv
+  directory: data/sample/      # local CSV replay files: <SYMBOL>_<timeframe>.csv  (SYNTHETIC sample by default)
+                               # point at a frozen dataset, e.g. data/history/datasets/<id>/, to use real data
   history_bars: 5000
+
+# Real historical data pipeline (python src/main.py data ...). OFFLINE except `data download|update`,
+# which use PUBLIC ccxt market-data endpoints only (no keys, no trading endpoints). Downloaded series live
+# under history.root; `data export` freezes them into hash-pinned datasets that data.directory can point at.
+history:
+  root: data/history/
+  default_source: ccxt:binance             # any ccxt exchange id works: ccxt:bybit, ccxt:okx, ...
+  series:
+    - {symbol: BTC/USDT, timeframe: 15m, kind: ohlcv, source: ccxt:binance, start: "2020-01-01"}
+    - {symbol: BTC/USDT, timeframe: 4h,  kind: ohlcv, source: ccxt:binance, start: "2020-01-01"}
+    - {symbol: USDT.D,   timeframe: 4h,  kind: close, source: file}   # v1: import a CSV with --source file:<path>
+  fetch: {page_limit: null, overlap_bars: 3, max_retries: 5, backoff_seconds: 2, rate_limit: true,
+          revision_tolerance_pct: 0.000001}
+  validation: {max_gap_pct: 0.5, outlier_range_multiple: 20, fail_on_warnings: false}
+  export: {compress: true}
 
 strategy:
   name: smc

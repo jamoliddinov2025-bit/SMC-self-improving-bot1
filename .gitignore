@@ -13,6 +13,9 @@ data/*
 !data/sample/
 !data/sample/*.csv
 !data/sample/README.md
+!data/history/
+data/history/*
+!data/history/README.md
 
 # Secrets - never commit keys (none are used in paper mode anyway)
 .env

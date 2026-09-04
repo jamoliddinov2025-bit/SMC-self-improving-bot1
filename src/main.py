@@ -19,6 +19,10 @@ PAPER TRADING ONLY. This does not connect to any exchange.
     python src/main.py proposal show <id> [--run RUN_ID]           read-only
     python src/main.py proposal apply <id> --confirm <id> [--run RUN_ID]
                                   writes config/config.proposed.<id>.yaml ONLY (manual review step)
+    python src/main.py data list|download|update|validate|inspect|export ...
+                                  real historical data pipeline (see src/data/cli.py). Only
+                                  download/update with a ccxt: source use the network (public
+                                  market-data endpoints, no keys); everything else is offline.
 """
 
 import logging
@@ -31,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.backtesting import BacktestEngine, FixedIntervalTestStrategy  # noqa: E402
-from src.data import CSVMarketData  # noqa: E402
+from src.data import CSVMarketData, dataset_identity  # noqa: E402
 from src.execution import PaperBroker  # noqa: E402
 from src.strategy.smc_strategy import SMCStrategy  # noqa: E402
 
@@ -113,7 +117,10 @@ def run_improve(config: dict, dry_run: bool = False, max_candidates: int = None,
     symbol, tf = config["market"]["symbol"], config["market"]["timeframe"]
     df = data.get_ohlcv(symbol, tf)
     label = str(data.resolve_path(symbol, tf).relative_to(ROOT))
-    synthetic = label.startswith("data/sample")
+    ident = dataset_identity(ROOT / config["data"]["directory"])
+    synthetic = ident["synthetic"] if ident else label.startswith("data/sample")
+    if ident:
+        label = f"{label} [dataset {ident['dataset_id']} sha256 {ident['dataset_sha256'][:12]}]"
     runner = ImprovementRunner(config, data_root=ROOT, run_id=run_id, max_candidates=max_candidates,
                                dry_run=dry_run, data_label=label, synthetic=synthetic)
     return runner.run(df)
@@ -136,6 +143,18 @@ def _print_improve(result) -> None:
     print("  NOTE: nothing was applied. config/config.yaml and src/ are untouched.")
 
 
+def _print_data_note(config: dict, tail: str = "numbers are NOT trading performance") -> None:
+    """Label the data source honestly: synthetic sample vs a frozen, hash-pinned dataset vs plain CSV folder."""
+    directory = str(config["data"]["directory"])
+    ident = dataset_identity(ROOT / directory)
+    if ident and not ident["synthetic"]:
+        print(f"DATA: dataset {ident['dataset_id']} (sha256 {ident['dataset_sha256'][:12]}) from {directory}")
+    elif ident or directory.startswith("data/sample"):
+        print(f"NOTE: SYNTHETIC sample data; {tail}.")
+    else:
+        print(f"DATA: {directory} (plain CSV folder, no manifest)")
+
+
 def _setup_logging(config: dict) -> None:
     lg = config.get("logging", {}) or {}
     path = ROOT / lg.get("file", "data/bot.log")
@@ -147,14 +166,16 @@ def _setup_logging(config: dict) -> None:
 
 def main() -> None:
     config = load_config()
+    if len(sys.argv) > 1 and sys.argv[1] == "data":
+        from src.data.cli import DataCLI  # lazy: keeps the fetch package out of every other command
+        sys.exit(DataCLI(config, ROOT).run(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == "improve":
         args = sys.argv[2:]
         if "--no-usdtd" in args:
             config.setdefault("usdtd", {})["enabled"] = False
         maxc = int(args[args.index("--max-candidates") + 1]) if "--max-candidates" in args else None
         print("SMC Self-Improving Bot - controlled improvement (OFFLINE analysis, human approval required)")
-        if str(config["data"]["directory"]).startswith("data/sample"):
-            print("NOTE: SYNTHETIC sample data; any output verifies plumbing only.")
+        _print_data_note(config, "any output verifies plumbing only")
         from src.improvement.runner import ImprovementDisabled
         try:
             result = run_improve(config, dry_run="--dry-run" in args, max_candidates=maxc)
@@ -192,7 +213,7 @@ def main() -> None:
             config.setdefault("usdtd", {})["enabled"] = False
         _setup_logging(config)
         print("SMC Self-Improving Bot - PAPER trading (replay-driven, no exchange connection)")
-        print("NOTE: SYNTHETIC sample data; numbers are NOT trading performance.")
+        _print_data_note(config)
         trader, reports = run_paper(config, name, reset="--reset" in args, limit=limit)
         counts = {}
         for r in reports:
@@ -227,7 +248,7 @@ def main() -> None:
         name = name or config.get("backtesting", {}).get("strategy", "fixture")
         usdtd_on = bool(config.get("usdtd", {}).get("enabled", False))
         print(f"SMC Self-Improving Bot - backtest  strategy={name}  usdtd={'on' if usdtd_on else 'off'}")
-        print("NOTE: SYNTHETIC sample data; numbers are NOT trading performance.")
+        _print_data_note(config)
         result, strategy = run_backtest(config, name)
         print(result.format_summary())
         if hasattr(strategy, "diag"):

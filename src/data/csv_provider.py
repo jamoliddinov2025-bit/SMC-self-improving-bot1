@@ -5,7 +5,8 @@ Runs fully offline. CSV files must contain the columns:
 
 Files are resolved as `<directory>/<SYMBOL>_<timeframe>.csv`, where the symbol
 separator "/" is replaced by "" (e.g. BTC/USDT 15m -> data/BTCUSDT_15m.csv).
-An explicit file path can also be passed to bypass this convention.
+An explicit file path can also be passed to bypass this convention. A gzip-compressed
+`<SYMBOL>_<timeframe>.csv.gz` is used when the plain `.csv` is absent (frozen datasets).
 """
 
 from pathlib import Path
@@ -26,7 +27,12 @@ class CSVMarketData(MarketDataProvider):
         return f"{symbol.replace('/', '')}_{timeframe}.csv"
 
     def resolve_path(self, symbol: str, timeframe: str) -> Path:
-        return self.file_path or self.directory / self.filename_for(symbol, timeframe)
+        if self.file_path:
+            return self.file_path
+        path = self.directory / self.filename_for(symbol, timeframe)
+        if not path.exists() and path.with_suffix(".csv.gz").exists():   # gzip-compressed dataset file
+            return path.with_suffix(".csv.gz")
+        return path
 
     def get_ohlcv(self, symbol: str, timeframe: str, limit: Optional[int] = None) -> pd.DataFrame:
         path = self.resolve_path(symbol, timeframe)

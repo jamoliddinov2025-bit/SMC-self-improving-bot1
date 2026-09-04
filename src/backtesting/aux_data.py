@@ -168,6 +168,8 @@ def build_aux_feeds(config: Dict[str, Any], data_root: Optional[Union[str, Path]
         df = frames.get(spec.name)
         if df is None:
             path = root / config["data"]["directory"] / aux_filename(spec.symbol, spec.timeframe)
+            if not path.exists() and path.with_suffix(".csv.gz").exists():   # gzip-compressed dataset file
+                path = path.with_suffix(".csv.gz")
             if not path.exists():
                 raise FileNotFoundError(f"auxiliary feed '{spec.name}' is enabled but {path} does not exist")
             df = pd.read_csv(path)
