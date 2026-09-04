@@ -7,7 +7,8 @@
     data validate [--series ID | --dataset ID]               re-run V1-V10, write validation.json/.md (offline)
     data inspect  [--series ID | --dataset ID]               range, rows, gaps, hashes, aux alignment (offline)
     data export   --dataset ID [--from ISO] [--to ISO] [--series ID ...] [--no-compress] [--overwrite]
-                                                             freeze a hash-pinned dataset dir (offline)
+                  [--synthetic]                              freeze a hash-pinned dataset dir (offline);
+                                                             --synthetic labels fixture data as NOT real
 
 Only `download`/`update` with a ccxt: source touch the network, via src/data/fetch/ccxt_source.py.
 These commands never write to config/config.yaml, src/, data/paper/ or data/improvement/.
@@ -279,7 +280,8 @@ class DataCLI:
         compress = self.compress and "--no-compress" not in args
         m = export_dataset(self.hroot, ds, primary, aux, start=_flag(args, "--from"), end=_flag(args, "--to"),
                            compress=compress, description=_flag(args, "--description", ""), aux_names=names,
-                           validation=validation, overwrite="--overwrite" in args)
+                           validation=validation, overwrite="--overwrite" in args,
+                           synthetic="--synthetic" in args)
         out_dir = self.hroot / "datasets" / ds
         self.out(f"  dataset         : {out_dir}")
         self.out(f"  primary         : {m['primary']['file']}  {m['primary']['rows']:,} rows  {m['primary']['first_open']} -> {m['primary']['last_open']}")

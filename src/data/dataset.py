@@ -230,8 +230,9 @@ def export_dataset(root: Union[str, Path], dataset_id: str, primary: SeriesStore
                    start: Optional[str] = None, end: Optional[str] = None, compress: bool = True,
                    description: str = "", aux_names: Optional[Dict[str, str]] = None,
                    validation: Optional[Dict[str, str]] = None, created_utc: Optional[str] = None,
-                   overwrite: bool = False) -> Dict[str, Any]:
-    """Freeze series (optionally sliced to [start, end]) into <root>/datasets/<dataset_id>/ with a manifest."""
+                   overwrite: bool = False, synthetic: bool = False) -> Dict[str, Any]:
+    """Freeze series (optionally sliced to [start, end]) into <root>/datasets/<dataset_id>/ with a manifest.
+    `synthetic=True` labels fixture/generated data so no consumer can present it as real history."""
     out = Path(root) / "datasets" / dataset_id
     if out.exists() and not overwrite:
         raise DatasetError(f"dataset {dataset_id!r} already exists at {out} (use --overwrite)")
@@ -261,7 +262,7 @@ def export_dataset(root: Union[str, Path], dataset_id: str, primary: SeriesStore
         manifest = {
             "schema_version": MANIFEST_SCHEMA, "dataset_id": dataset_id, "description": description,
             "created_utc": created_utc or pd.Timestamp.now("UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "window": {"start": start, "end": end}, "compressed": compress, "synthetic": False,
+            "window": {"start": start, "end": end}, "compressed": compress, "synthetic": bool(synthetic),
             "primary": _freeze(primary),
             "auxiliary": [dict(_freeze(a), name=(aux_names or {}).get(a.id, a.id)) for a in auxiliary],
             "validation": validation or {},

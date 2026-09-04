@@ -25,7 +25,7 @@ data/
   sample/              # SYNTHETIC offline data: BTCUSDT_15m.csv, USDTD_4h.csv (see data/sample/README.md)
   history/             # REAL downloaded series + frozen datasets (git-ignored; see data/history/README.md)
 src/
-  main.py              # entry point: demo | backtest | paper | improve | proposal | data
+  main.py              # entry point: demo | backtest | paper | improve | proposal | data | benchmark
   data/                # market-data interface, CSV replay provider, historical pipeline (validate, dataset, cli)
   data/fetch/          # the ONLY network code: public ccxt OHLCV source + local-file import + downloader
   strategy/            # SMCEngine (structure analysis), POI logic, USDT.D regime, SMCStrategy (signals)
@@ -34,6 +34,7 @@ src/
   execution/           # PaperBroker, PaperTrader (replay-driven paper loop), state store, candle log
   backtesting/         # point-in-time BacktestEngine, Strategy protocol, aux feeds, journal, metrics
   improvement/         # OFFLINE controlled-improvement framework (walk-forward parameter analysis, proposals)
+  benchmark/           # READ-ONLY real-historical baseline of the current strategy (report + metrics)
 tests/
 requirements.txt
 README.md
@@ -205,6 +206,38 @@ python src/main.py data export --dataset btc-15m-2020-2025      # frozen, hash-p
   records it as additive metadata (behaviour unchanged).
 - Storage stays CSV (gzip for datasets); no Parquet, no database.
 
+### Real-historical baseline benchmark (`python src/main.py benchmark`)
+
+A **read-only** measurement of the *current* `SMCStrategy` on a frozen, hash-verified dataset. It exists to
+answer "what does the bot actually do on real history?" honestly - it never tunes, proposes or changes anything.
+
+```bash
+python src/main.py data download --symbol BTC/USDT --timeframe 15m --from 2020-01-01   # Step 10 (network)
+python src/main.py data download --symbol USDT.D --timeframe 4h --source file:/path/usdtd.csv
+python src/main.py data export --dataset btc15m-2020-latest
+python src/main.py benchmark --dataset btc15m-2020-latest --dry-run   # verify hashes + validate only
+python src/main.py benchmark --dataset btc15m-2020-latest             # -> data/benchmarks/<id>/
+```
+
+- Input must be a frozen dataset directory (`manifest.json`); `data/sample/` and other plain folders are refused.
+  Datasets exported with `data export --synthetic` are labelled **SYNTHETIC / FIXTURE BASELINE**; anything
+  else is labelled **REAL-HISTORICAL BASELINE**. Nothing is ever fabricated, filled or repaired.
+- Gate: file hashes must match the manifest (tampering aborts) and Step 10 validation must have no critical
+  problem (OHLC violations, off-grid/naive timestamps, duplicates, unclosed last candle, missing required aux
+  feed). Warnings such as gaps are printed and written to `validation.json`; `benchmark.fail_on_warnings: true`
+  makes them fatal too.
+- Output (`data/benchmarks/<benchmark_id>/`, git-ignored): `manifest.json` (dataset id + sha256, per-file
+  hashes, strategy, trading config hash and full immutable config snapshot, symbol/timeframe/range, equity,
+  fee/slippage assumptions, repo commit, timestamp), `metrics.json`, `trades.csv`, `rejections.csv`,
+  `equity_curve.csv`, `validation.json`, `report.md`.
+- Metrics separate **BUY signals -> risk-approved -> executed (next-open fill) -> closed**, and add median R,
+  max consecutive losses, average trade duration, estimated slippage cost and the strategy gate diagnostics
+  to the engine metrics. Below `benchmark.min_trades_for_statistics` closed trades, ratio metrics (win rate,
+  expectancy, R, profit factor) are reported as **unavailable** rather than invented.
+- The engine, strategy, risk rules and `config/config.yaml` are used as-is and left untouched; the paper
+  trader is not involved. Historical results are not a forecast: *past performance does not guarantee
+  future performance*.
+
 ## Development stages
 
 | Step | Goal | Status |
@@ -219,6 +252,7 @@ python src/main.py data export --dataset btc-15m-2020-2025      # frozen, hash-p
 | 8 | Paper-trading loop (replay-driven, resumable) + per-candle logging + generic aux feeds | ✅ done |
 | 9 | Controlled improvement framework (offline walk-forward parameter analysis, ranked proposals, manual approval) | ✅ done |
 | 10 | Real historical data pipeline (public ccxt download, validation, hash-pinned datasets, file import for USDT.D) | ✅ done |
+| 11 | Real-data baseline benchmark (read-only measurement of the current strategy on a frozen dataset) | ✅ done |
 
 ## Known limitations
 

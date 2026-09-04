@@ -168,6 +168,16 @@ improvement:
   #   strategy.stops.buffer_atr: {min: 0.15, max: 0.35, step: 0.05}
   #   strategy.targets.mode: {}
 
+# Step 11 - real-historical baseline benchmark (python src/main.py benchmark). READ-ONLY: runs the CURRENT
+# strategy on a frozen, hash-verified dataset and writes a report. Never tunes, proposes or changes anything.
+benchmark:
+  results_directory: data/benchmarks/
+  dataset_directory: null              # frozen dataset dir (data/history/datasets/<id>/); null -> data.directory
+  min_trades_for_statistics: 30        # below this, ratio metrics are reported as unavailable, not invented
+  fail_on_warnings: false              # true -> data-quality warnings (e.g. gaps) also abort the benchmark
+  start_date: null                     # optional window inside the dataset (ISO); null -> whole dataset
+  end_date: null
+
 logging:
   level: INFO
   file: data/bot.log

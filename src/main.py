@@ -19,6 +19,10 @@ PAPER TRADING ONLY. This does not connect to any exchange.
     python src/main.py proposal show <id> [--run RUN_ID]           read-only
     python src/main.py proposal apply <id> --confirm <id> [--run RUN_ID]
                                   writes config/config.proposed.<id>.yaml ONLY (manual review step)
+    python src/main.py benchmark [--dataset <id|dir>] [--id NAME] [--dry-run] [--no-usdtd]
+                                  Step 11 READ-ONLY baseline of the CURRENT strategy on a frozen,
+                                  hash-verified dataset -> data/benchmarks/<id>/ (report.md, metrics.json,
+                                  manifest.json, trades.csv ...). Aborts on invalid data. No tuning.
     python src/main.py data list|download|update|validate|inspect|export ...
                                   real historical data pipeline (see src/data/cli.py). Only
                                   download/update with a ccxt: source use the network (public
@@ -143,6 +147,44 @@ def _print_improve(result) -> None:
     print("  NOTE: nothing was applied. config/config.yaml and src/ are untouched.")
 
 
+def run_benchmark(config: dict, dataset_directory: str = None, benchmark_id: str = None, dry_run: bool = False):
+    """Step 11: benchmark the CURRENT strategy on a frozen dataset. Returns BenchmarkResult (aborts on invalid data)."""
+    from src.benchmark.runner import BenchmarkRunner  # lazy
+    dataset_directory = dataset_directory or None
+    if dataset_directory and not dataset_directory.startswith(("data/", "/")) and not Path(dataset_directory).is_absolute():
+        # bare dataset id -> data/history/datasets/<id>/
+        root = (config.get("history", {}) or {}).get("root", "data/history/")
+        dataset_directory = f"{root.rstrip('/')}/datasets/{dataset_directory}/"
+    return BenchmarkRunner(config, ROOT, benchmark_id=benchmark_id, dataset_directory=dataset_directory, dry_run=dry_run).run()
+
+
+def _print_benchmark(res) -> None:
+    if res.aborted:
+        print(f"  ABORTED         : {res.abort_reason}")
+    else:
+        m, x = res.manifest, res.metrics
+        print(f"  label           : {m['label']}")
+        print(f"  dataset         : {m['dataset']['dataset_id']}  sha256 {m['dataset']['dataset_sha256'][:16]}  "
+              f"{m['dataset']['primary']['rows']:,} bars  {m['benchmark_date_range']['start']} -> {m['benchmark_date_range']['end']}")
+        print(f"  validation      : {m['validation_status']}" + (f"  ({len(res.validation['warnings'])} warnings)" if res.validation.get('warnings') else ""))
+        if m.get("dry_run"):
+            print("  DRY RUN         : dataset verified and validated; no backtest run, nothing written")
+        else:
+            f = x["signal_funnel"]
+            print(f"  signals         : {f['buy_signals']} BUY -> {f['risk_rejected_buys']} rejected -> {f['executed_buys']} executed -> "
+                  f"{f['closed_trades']} closed (+{f['force_closed_end_of_data']} end-of-data)")
+            print(f"  equity          : {x['starting_equity']:.2f} -> {x['ending_equity']:.2f}  ({x['return_pct']:+.2f}%)  "
+                  f"max DD {x['max_drawdown_pct']:.2f}%  fees {x['fees']['total_fees']:.2f}")
+            if x["statistics_available"]:
+                print(f"  stats           : win rate {x['win_rate_pct']:.1f}%  avg R {x['average_r']:+.3f}  median R {x['median_r']:+.3f}  "
+                      f"PF {x['profit_factor']}")
+            else:
+                print(f"  stats           : unavailable - {x['unavailable_reason']}")
+    if res.files:
+        print(f"  report          : {res.files.get('report.md')}")
+    print("  NOTE: read-only benchmark. config/config.yaml, strategy, risk and paper state are untouched; no proposal made.")
+
+
 def _print_data_note(config: dict, tail: str = "numbers are NOT trading performance") -> None:
     """Label the data source honestly: synthetic sample vs a frozen, hash-pinned dataset vs plain CSV folder."""
     directory = str(config["data"]["directory"])
@@ -166,6 +208,16 @@ def _setup_logging(config: dict) -> None:
 
 def main() -> None:
     config = load_config()
+    if len(sys.argv) > 1 and sys.argv[1] == "benchmark":
+        args = sys.argv[2:]
+        dataset = args[args.index("--dataset") + 1] if "--dataset" in args and args.index("--dataset") + 1 < len(args) else None
+        bid = args[args.index("--id") + 1] if "--id" in args and args.index("--id") + 1 < len(args) else None
+        if "--no-usdtd" in args:
+            config.setdefault("usdtd", {})["enabled"] = False
+        print("SMC Self-Improving Bot - baseline benchmark (READ-ONLY: current strategy, frozen dataset, no tuning)")
+        res = run_benchmark(config, dataset_directory=dataset, benchmark_id=bid, dry_run="--dry-run" in args)
+        _print_benchmark(res)
+        sys.exit(1 if res.aborted else 0)
     if len(sys.argv) > 1 and sys.argv[1] == "data":
         from src.data.cli import DataCLI  # lazy: keeps the fetch package out of every other command
         sys.exit(DataCLI(config, ROOT).run(sys.argv[2:]))
