@@ -22,3 +22,6 @@ data/*
 .vscode/
 .idea/
 .DS_Store
+
+# Proposed configs written by `proposal apply` - review locally, never commit
+config/config.proposed.*.yaml

@@ -131,11 +131,26 @@ paper:
   allow_config_change: false       # refuse to resume state.json written with a different trading config
   strategy: smc                    # smc | fixture
 
+# Controlled Improvement Framework (python src/main.py improve) - OFFLINE analysis only.
+# Produces ranked recommendations under results_directory/<run_id>/; a human must review them.
+# It never edits src/ or this file. Risk limits, fees, slippage, balance, symbol/timeframe and
+# USDT.D thresholds are NOT tunable (hard-coded whitelist in src/improvement/space.py).
 improvement:
-  enabled: false                # controlled, manual-approval-only for now
-  evaluation_window_trades: 50
-  min_trades_before_change: 100
-  max_parameter_change_pct: 10
+  enabled: false                       # `improve` refuses to run while false
+  evaluation_window_trades: 50         # reported for context only
+  min_trades_before_change: 100        # minimum total OOS trades (baseline AND candidate)
+  max_parameter_change_pct: 10         # max relative change of a numeric parameter vs the current value
+  max_params_changed_per_proposal: 2   # v1 search changes one parameter at a time
+  search: {method: coordinate_single_parameter, max_candidates: null}
+  data: {holdout_pct: 20, folds: 4, oos_pct_per_fold: 20, anchored: true, min_trades_per_fold: 8}
+  constraints: {require_positive_all_folds: true, oos_is_ratio_min: 0.5, min_improvement_pct: 5,
+                max_drawdown_pct_limit: null, holdout_expectancy_ratio_min: 0.5}   # null -> risk.max_drawdown_pct
+  scoring: {dd_penalty: 0.05}          # score = avg_R * sqrt(trades) - dd_penalty * maxDD%
+  top_n_for_holdout: 5                 # only these survivors ever see the sealed holdout
+  results_directory: data/improvement/
+  # parameters: omit to tune the whole whitelist; list a subset (optionally narrowing bounds) to restrict it, e.g.
+  #   strategy.stops.buffer_atr: {min: 0.15, max: 0.35, step: 0.05}
+  #   strategy.targets.mode: {}
 
 logging:
   level: INFO

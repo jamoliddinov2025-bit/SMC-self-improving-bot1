@@ -12,6 +12,13 @@ PAPER TRADING ONLY. This does not connect to any exchange.
                                   the CSV provider one at a time through the PaperTrader,
                                   persisting state under paper.state_directory. Re-running
                                   resumes where it stopped (already-seen candles are skipped).
+    python src/main.py improve [--dry-run] [--max-candidates N] [--no-usdtd]
+                                  OFFLINE controlled-improvement analysis: walk-forward parameter
+                                  search on the local CSV, ranked report under data/improvement/.
+                                  Writes recommendations only - never config.yaml or src/.
+    python src/main.py proposal show <id> [--run RUN_ID]           read-only
+    python src/main.py proposal apply <id> --confirm <id> [--run RUN_ID]
+                                  writes config/config.proposed.<id>.yaml ONLY (manual review step)
 """
 
 import logging
@@ -99,6 +106,36 @@ def run_paper(config: dict, strategy_name: str = None, reset: bool = False, limi
     return trader, reports
 
 
+def run_improve(config: dict, dry_run: bool = False, max_candidates: int = None, run_id: str = None):
+    """Offline analysis on the local CSV. Returns ImprovementResult (aborts cleanly on insufficient data)."""
+    from src.improvement.runner import ImprovementRunner  # lazy
+    data = CSVMarketData(directory=ROOT / config["data"]["directory"])
+    symbol, tf = config["market"]["symbol"], config["market"]["timeframe"]
+    df = data.get_ohlcv(symbol, tf)
+    label = str(data.resolve_path(symbol, tf).relative_to(ROOT))
+    synthetic = label.startswith("data/sample")
+    runner = ImprovementRunner(config, data_root=ROOT, run_id=run_id, max_candidates=max_candidates,
+                               dry_run=dry_run, data_label=label, synthetic=synthetic)
+    return runner.run(df)
+
+
+def _print_improve(result) -> None:
+    if result.aborted:
+        print(f"  ABORTED         : {result.abort_reason}")
+    else:
+        s = result.summary
+        print(f"  candidates      : {s['search']['candidates']}   backtests: {s['search']['backtests_run']}")
+        print(f"  baseline        : OOS score median {s['baseline']['oos_score_median']:.3f}  "
+              f"trades {s['baseline']['oos_trades_total']}")
+        print(f"  survivors       : {s['survivors']}   recommended after holdout: {s['recommended'] or 'none'}")
+        for row in result.ranking[:5]:
+            print(f"    #{row['rank']:<2} {row['label']:<45} score {row['oos_score_median']:+.3f} "
+                  f"{'pass' if row['passed'] else 'fail'}  {row['verdict']}")
+    if result.files:
+        print(f"  report          : {result.files.get('report.md')}")
+    print("  NOTE: nothing was applied. config/config.yaml and src/ are untouched.")
+
+
 def _setup_logging(config: dict) -> None:
     lg = config.get("logging", {}) or {}
     path = ROOT / lg.get("file", "data/bot.log")
@@ -110,6 +147,43 @@ def _setup_logging(config: dict) -> None:
 
 def main() -> None:
     config = load_config()
+    if len(sys.argv) > 1 and sys.argv[1] == "improve":
+        args = sys.argv[2:]
+        if "--no-usdtd" in args:
+            config.setdefault("usdtd", {})["enabled"] = False
+        maxc = int(args[args.index("--max-candidates") + 1]) if "--max-candidates" in args else None
+        print("SMC Self-Improving Bot - controlled improvement (OFFLINE analysis, human approval required)")
+        if str(config["data"]["directory"]).startswith("data/sample"):
+            print("NOTE: SYNTHETIC sample data; any output verifies plumbing only.")
+        from src.improvement.runner import ImprovementDisabled
+        try:
+            result = run_improve(config, dry_run="--dry-run" in args, max_candidates=maxc)
+        except ImprovementDisabled as exc:
+            print(f"  REFUSED         : {exc}")
+            return
+        _print_improve(result)
+        return
+    if len(sys.argv) > 2 and sys.argv[1] == "proposal":
+        import src.improvement.apply as proposals
+        action, args = sys.argv[2], sys.argv[3:]
+        pid = args[0] if args and not args[0].startswith("--") else None
+        run_id = args[args.index("--run") + 1] if "--run" in args else None
+        results_dir = ROOT / config.get("improvement", {}).get("results_directory", "data/improvement/")
+        if pid is None:
+            print("usage: proposal show <id> | proposal apply <id> --confirm <id>")
+            return
+        try:
+            if action == "show":
+                print(proposals.show(results_dir, CONFIG_PATH, pid, run_id))
+            elif action == "apply":
+                confirm = args[args.index("--confirm") + 1] if "--confirm" in args and args.index("--confirm") + 1 < len(args) else None
+                target = proposals.apply(results_dir, CONFIG_PATH, pid, confirm, run_id)
+                print(f"Wrote {target}\nconfig/config.yaml was NOT modified. Review the proposed file and copy values by hand.")
+            else:
+                print("usage: proposal show <id> | proposal apply <id> --confirm <id>")
+        except proposals.ProposalError as exc:
+            print(f"  REFUSED         : {exc}")
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "paper":
         args = sys.argv[2:]
         name = args[args.index("--strategy") + 1] if "--strategy" in args else None

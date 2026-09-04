@@ -31,7 +31,7 @@ src/
   risk/                # position sizing, TradeValidator (kill switches), RiskState
   execution/           # PaperBroker, PaperTrader (replay-driven paper loop), state store, candle log
   backtesting/         # point-in-time BacktestEngine, Strategy protocol, aux feeds, journal, metrics
-  improvement/         # controlled parameter improvement
+  improvement/         # OFFLINE controlled-improvement framework (walk-forward parameter analysis, proposals)
 tests/
 requirements.txt
 README.md
@@ -46,6 +46,9 @@ pip install -r requirements.txt
 python src/main.py            # broker plumbing demo
 python src/main.py backtest [--strategy smc|fixture] [--no-usdtd]   # backtest on the synthetic sample
 python src/main.py paper [--reset] [--candles N] [--strategy smc|fixture] [--no-usdtd]   # paper-trading loop
+python src/main.py improve [--dry-run] [--max-candidates N]   # offline improvement analysis (needs improvement.enabled)
+python src/main.py proposal show P-1                          # read-only
+python src/main.py proposal apply P-1 --confirm P-1           # writes config/config.proposed.P-1.yaml only
 pytest
 ```
 
@@ -132,6 +135,40 @@ drops the pending order, so a restart resumes from the last good candle. The onl
 Risk Engine. A `state.json` written with a different trading configuration is refused unless
 `paper.allow_config_change: true` (or `--reset`).
 
+### Controlled improvement (`python src/main.py improve`) — human approval required
+
+An **offline analysis tool**, not a self-modifying system. It never edits `src/`, never edits or overwrites
+`config/config.yaml`, never touches paper-trading state and never deploys anything. Its only output is a
+report directory `data/improvement/<run_id>/` containing `report.md`, `ranking.csv`, `folds.csv`,
+`summary.json` and `proposals/P-<n>.yaml`.
+
+- **Parameter optimisation only**, over a hard-coded whitelist of strategy-shape parameters
+  (`src/improvement/space.py`): setup age, POI size, rejection threshold, cooldown, EMA/volume filter switches and
+  thresholds, stop buffer / min / max ATR, target mode / fixed RR, time stop, CHoCH exit. Risk limits, fees,
+  slippage, balance, symbol/timeframe, indicator periods and USDT.D thresholds are **not tunable**.
+- Bounds: whitelist ranges/steps, `max_parameter_change_pct` (default 10 % vs the current value), at most
+  `max_params_changed_per_proposal` (2) changed parameters, invariants `min_stop_atr ≤ max_stop_atr` and
+  `fixed_rr ≥ risk.min_risk_reward`. Candidates are **declared grid values only**: a grid neighbour that
+  exceeds the change cap is skipped (never interpolated), so a parameter may legitimately have zero legal
+  candidates — the report lists those under "parameters with no legal grid candidate".
+- Search v1: deterministic **single-parameter coordinate descent** (no randomness / ML / Bayesian / gradients).
+  The `Stage` abstraction leaves room for a future pairwise stage.
+- Evaluation: the existing `BacktestEngine` + `SMCStrategy` + `compute_metrics`, with warm-up history fed before
+  each slice (warm-up trades are discarded and the slice is re-based). USDT.D alignment is the normal
+  point-in-time aux-feed path.
+- Data: final **20 % holdout is sealed** — never used for search or ranking; only the top-N survivors are
+  evaluated on it once. Development window → **4 anchored walk-forward folds**, 20 % OOS each.
+- Constraints (all must pass): total OOS trades ≥ `min_trades_before_change`, per-fold minimum trades, every
+  OOS fold positive, median & min OOS score above baseline, OOS/IS expectancy ratio, drawdown limit, minimum
+  improvement, neighbourhood stability; then the holdout check. The **baseline runs through the identical
+  pipeline**. If the baseline itself has too few OOS trades the run **aborts** with a clear message — the bundled
+  200-bar synthetic sample does exactly that, by design.
+- Score: median over OOS folds of `avg_R × √trades − dd_penalty × maxDD%`.
+
+Applying a proposal is a separate manual step: `proposal show` prints the overlay, evidence and diff and writes
+nothing; `proposal apply <id> --confirm <id>` requires the exact ID twice, refuses if `config.yaml` changed since
+the run, and writes **only** `config/config.proposed.<id>.yaml` for you to review and copy by hand.
+
 ## Development stages
 
 | Step | Goal | Status |
@@ -144,7 +181,7 @@ Risk Engine. A `state.json` written with a different trading configuration is re
 | 6 | Backtesting engine + performance evaluation (fixture strategy only) | ✅ done |
 | 7 | SMC trading strategy (long-only) + optional USDT.D regime filter | ✅ done |
 | 8 | Paper-trading loop (replay-driven, resumable) + per-candle logging + generic aux feeds | ✅ done |
-| 9 | Controlled strategy improvement (bounded parameter changes, manual approval) | planned |
+| 9 | Controlled improvement framework (offline walk-forward parameter analysis, ranked proposals, manual approval) | ✅ done |
 
 ## Known limitations
 
@@ -153,6 +190,8 @@ Risk Engine. A `state.json` written with a different trading configuration is re
   data is a separate task.
 - **No stop modification yet** (break-even / trailing): the backtester has no "amend stop" signal.
 - USDT.D ↔ BTC relationship is unverified; defaults are conservative and every effect is switchable.
+- **Improvement needs real history.** The framework aborts on the synthetic sample (too few baseline trades); a
+  synthetic long series is used in tests for plumbing only. Its report labels synthetic input explicitly.
 - **Paper mode is replay-driven.** `python src/main.py paper` feeds the local CSV; a scheduled/live market-data
   provider is a later, separate task. The loop itself only needs closed candles, one at a time.
 - A capped `paper.warmup_bars` rebuilds indicators/SMC from a shorter history on restart, so recursive values
