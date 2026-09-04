@@ -198,6 +198,12 @@ python src/main.py data export --dataset btc-15m-2020-2025      # frozen, hash-p
   (public market-data endpoints) are ever called; API keys/secrets are refused and no environment variables
   are read. Network code lives exclusively in `src/data/fetch/` and is only reachable from the `data` command.
 - **USDT.D** has no public OHLCV endpoint: v1 imports a CSV (`timestamp,close`) through the same pipeline.
+- **Offline BTC import**: official Binance Vision monthly archives (`BTCUSDT-15m-YYYY-MM.zip`, downloaded in a
+  browser) are accepted by the same `file:` source - a directory, single file or glob. The 12-column kline
+  layout is mapped to the canonical `timestamp,open,high,low,close,volume` (extra columns discarded, ZIP read
+  in memory with a single safe CSV member), then goes through the identical validation/export path; no
+  network or API key is involved. The external Binance `.CHECKSUM` is not verified; the repository hashes the
+  canonical dataset it produces, and that frozen manifest is the artifact of record (see `data/history/README.md`).
 - **Quality**: gaps, duplicates (incl. conflicting), out-of-order rows, naive/off-grid timestamps, OHLC
   violations, outliers, unclosed last candle, hash mismatches — reported in `validation.json/.md`. Gaps are
   **never filled**.
