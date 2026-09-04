@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Data, logs and generated results (keep the folder, not the contents)
+# data/paper/ (paper-trading state, history and logs) is covered by this rule too
+data/*
+!data/.gitkeep
+!data/sample/
+!data/sample/*.csv
+!data/sample/README.md
+!data/history/
+data/history/*
+!data/history/README.md
+
+# Secrets - never commit keys (none are used in paper mode anyway)
+.env
+*.key
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Proposed configs written by `proposal apply` - review locally, never commit
+config/config.proposed.*.yaml

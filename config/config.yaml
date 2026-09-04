@@ -1,0 +1,183 @@
+# SMC Self-Improving Bot - configuration
+# PAPER TRADING ONLY. No real exchange connection, no real API keys.
+
+mode: paper            # allowed: paper | backtest  (live is intentionally NOT supported)
+
+market:
+  exchange: binance    # data source name only (used for historical/public data later)
+  symbol: BTC/USDT
+  timeframe: 15m
+  higher_timeframe: 4h
+
+data:
+  directory: data/sample/      # local CSV replay files: <SYMBOL>_<timeframe>.csv  (SYNTHETIC sample by default)
+                               # point at a frozen dataset, e.g. data/history/datasets/<id>/, to use real data
+  history_bars: 5000
+
+# Real historical data pipeline (python src/main.py data ...). OFFLINE except `data download|update`,
+# which use PUBLIC ccxt market-data endpoints only (no keys, no trading endpoints). Downloaded series live
+# under history.root; `data export` freezes them into hash-pinned datasets that data.directory can point at.
+history:
+  root: data/history/
+  default_source: ccxt:binance             # any ccxt exchange id works: ccxt:bybit, ccxt:okx, ...
+  series:
+    - {symbol: BTC/USDT, timeframe: 15m, kind: ohlcv, source: ccxt:binance, start: "2020-01-01"}
+    - {symbol: BTC/USDT, timeframe: 4h,  kind: ohlcv, source: ccxt:binance, start: "2020-01-01"}
+    - {symbol: USDT.D,   timeframe: 4h,  kind: close, source: file}   # v1: import a CSV with --source file:<path>
+  fetch: {page_limit: null, overlap_bars: 3, max_retries: 5, backoff_seconds: 2, rate_limit: true,
+          revision_tolerance_pct: 0.000001}
+  validation: {max_gap_pct: 0.5, outlier_range_multiple: 20, fail_on_warnings: false}
+  export: {compress: true}
+
+strategy:
+  name: smc
+  structure:
+    pivot_strength: 3          # N candles each side; a pivot at i is only KNOWN at i+N
+    break_on: close            # BOS break condition (only 'close' supported)
+  liquidity:
+    sweep_enabled: true
+  order_blocks:
+    enabled: true
+    max_age_bars: 100          # reserved for later strategy use (not used by the detector)
+  fair_value_gaps:
+    enabled: true
+    min_gap_pct: 0.0           # 0 = pure 3-candle definition; >0 filters tiny gaps
+  # ---- SMCStrategy (long-only spot). SMC is primary; indicators are confirmation only.
+  entry:
+    setup_max_age_bars: 60         # a bullish BOS older than this no longer arms a setup
+    choch_age_multiplier: 1.5      # CHoCH-origin setups may age this much longer
+    poi_priority: [order_block, fvg]
+    poi_max_atr_multiple: 3.0      # ignore zones taller than this many ATR
+    require_rejection: true        # need D1/D2/D3 rejection on the touch candle
+    rejection_close_position_min: 0.5
+    max_entries_per_setup: 1
+    reentry_cooldown_bars: 3
+  filters:
+    ema_trend: {enabled: true}                        # close > EMA200 and EMA50 > EMA200
+    ema_extension: {enabled: true, atr_multiple: 1.0} # close <= EMA20 + k*ATR
+    volume: {enabled: true, ratio_min: 0.8, bos_ratio_min: 1.2}
+  stops:
+    buffer_atr: 0.25
+    min_stop_atr: 0.5
+    max_stop_atr: 3.0
+  targets:
+    mode: structure                # structure | fixed_rr | hybrid
+    fixed_rr: 2.0
+  exits:
+    exit_on_bearish_choch: true
+    max_bars_in_trade: 96          # time stop if not >= 1R in profit after this many bars
+
+# Additional named auxiliary feeds (point-in-time, same close-time alignment as USDT.D). They are
+# exposed to strategies as ctx.aux[<name>] but NO strategy consumes them yet. USDT.D is configured
+# in the `usdtd` block below and is the only active regime source. Example:
+#   feeds:
+#     btcd:   {symbol: BTC.D,  timeframe: 4h, enabled: true}    # file data/<dir>/BTCD_4h.csv (timestamp, close)
+#     total3: {symbol: TOTAL3, timeframe: 4h, enabled: true}
+auxiliary:
+  feeds: {}
+
+# USDT dominance regime filter - OPTIONAL. Hypothesis only; every effect is switchable.
+# It can only TIGHTEN strategy gates in a RISING regime; it never touches the Risk Engine.
+usdtd:
+  enabled: true
+  symbol: USDT.D                   # file: <data.directory>/USDTD_<timeframe>.csv (timestamp, close)
+  timeframe: 4h
+  ema_fast: 20
+  ema_slow: 50
+  slope_lookback: 6
+  roc_lookback: 12
+  slope_threshold_pct: 0.10
+  roc_threshold_pct: 0.50
+  confirm_bars: 2
+  risk_off:
+    min_confluence_score: 2
+    rr_add: 0.5
+    vol_ratio_min: 1.0
+    require_deeper_poi: true
+
+indicators:
+  ema:
+    periods: [20, 50, 200]      # every EMA computed by the indicator engine
+    fast: 50                    # aliases used later by the strategy (must be in `periods`)
+    slow: 200
+  atr:
+    period: 14                  # Wilder ATR
+  volume:
+    ma_period: 20               # simple moving average of volume
+    spike_multiplier: 1.5
+
+risk:
+  starting_balance: 10000       # paper balance in quote currency (USDT)
+  risk_per_trade_pct: 1.0       # % of equity risked per trade
+  max_daily_loss_pct: 3.0       # kill switch: no new trades once today's loss exceeds this
+  max_drawdown_pct: 10.0        # kill switch: no new trades once drawdown from peak exceeds this
+  max_consecutive_losses: 5     # kill switch: no new trades after this many losses in a row
+  max_open_positions: 1         # spot, one position at a time
+  min_risk_reward: 2.0
+  stop_loss_atr_multiplier: 1.5
+
+execution:
+  paper_fee_pct: 0.1
+  slippage_pct: 0.02
+  trade_log: data/trades.csv
+
+backtesting:
+  start_date: null                  # optional ISO date filter (null = from first candle)
+  end_date: null                    # optional ISO date filter (null = to last candle)
+  results_directory: data/backtests/
+  save_results: false               # write trades.csv / equity_curve.csv / summary.json per run
+  entry_fill: next_open             # next_open | same_close  (when an entry signal is filled)
+  stop_first_on_conflict: true      # stop and target in the same candle -> assume stop hit (pessimistic)
+  gap_fill_at_open: true            # candle opens beyond the stop -> fill at open, not at stop price
+  slippage_on_entries: true         # apply execution.slippage_pct to entry fills (adverse)
+  slippage_on_stops: true           # apply execution.slippage_pct to stop-loss fills (adverse)
+  slippage_on_targets: false        # take-profit fills are treated as limit fills (no slippage)
+  close_open_position_at_end: true  # force-close at the last close, flagged 'end_of_data'
+  strategy: smc                     # smc | fixture   (python src/main.py backtest [--strategy X])
+  demo_strategy:                    # FixedIntervalTestStrategy - a TEST FIXTURE, not a trading strategy
+    interval_bars: 25
+    stop_atr_multiplier: 1.5
+    risk_reward: 2.0
+
+# Paper-trading loop (python src/main.py paper). Replay-driven, deterministic, same fill model and
+# strategy/risk path as the backtester. PAPER ONLY - no exchange connectivity.
+paper:
+  state_directory: data/paper/     # state.json, history.csv, candles.csv, trades.csv, rejections.csv
+  warmup_bars: 0                   # history rows replayed on restart; 0 = all (exact resume)
+  allow_config_change: false       # refuse to resume state.json written with a different trading config
+  strategy: smc                    # smc | fixture
+
+# Controlled Improvement Framework (python src/main.py improve) - OFFLINE analysis only.
+# Produces ranked recommendations under results_directory/<run_id>/; a human must review them.
+# It never edits src/ or this file. Risk limits, fees, slippage, balance, symbol/timeframe and
+# USDT.D thresholds are NOT tunable (hard-coded whitelist in src/improvement/space.py).
+improvement:
+  enabled: false                       # `improve` refuses to run while false
+  evaluation_window_trades: 50         # reported for context only
+  min_trades_before_change: 100        # minimum total OOS trades (baseline AND candidate)
+  max_parameter_change_pct: 10         # max relative change of a numeric parameter vs the current value
+  max_params_changed_per_proposal: 2   # v1 search changes one parameter at a time
+  search: {method: coordinate_single_parameter, max_candidates: null}
+  data: {holdout_pct: 20, folds: 4, oos_pct_per_fold: 20, anchored: true, min_trades_per_fold: 8}
+  constraints: {require_positive_all_folds: true, oos_is_ratio_min: 0.5, min_improvement_pct: 5,
+                max_drawdown_pct_limit: null, holdout_expectancy_ratio_min: 0.5}   # null -> risk.max_drawdown_pct
+  scoring: {dd_penalty: 0.05}          # score = avg_R * sqrt(trades) - dd_penalty * maxDD%
+  top_n_for_holdout: 5                 # only these survivors ever see the sealed holdout
+  results_directory: data/improvement/
+  # parameters: omit to tune the whole whitelist; list a subset (optionally narrowing bounds) to restrict it, e.g.
+  #   strategy.stops.buffer_atr: {min: 0.15, max: 0.35, step: 0.05}
+  #   strategy.targets.mode: {}
+
+# Step 11 - real-historical baseline benchmark (python src/main.py benchmark). READ-ONLY: runs the CURRENT
+# strategy on a frozen, hash-verified dataset and writes a report. Never tunes, proposes or changes anything.
+benchmark:
+  results_directory: data/benchmarks/
+  dataset_directory: null              # frozen dataset dir (data/history/datasets/<id>/); null -> data.directory
+  min_trades_for_statistics: 30        # below this, ratio metrics are reported as unavailable, not invented
+  fail_on_warnings: false              # true -> data-quality warnings (e.g. gaps) also abort the benchmark
+  start_date: null                     # optional window inside the dataset (ISO); null -> whole dataset
+  end_date: null
+
+logging:
+  level: INFO
+  file: data/bot.log
