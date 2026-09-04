@@ -51,6 +51,15 @@ strategy:
     exit_on_bearish_choch: true
     max_bars_in_trade: 96          # time stop if not >= 1R in profit after this many bars
 
+# Additional named auxiliary feeds (point-in-time, same close-time alignment as USDT.D). They are
+# exposed to strategies as ctx.aux[<name>] but NO strategy consumes them yet. USDT.D is configured
+# in the `usdtd` block below and is the only active regime source. Example:
+#   feeds:
+#     btcd:   {symbol: BTC.D,  timeframe: 4h, enabled: true}    # file data/<dir>/BTCD_4h.csv (timestamp, close)
+#     total3: {symbol: TOTAL3, timeframe: 4h, enabled: true}
+auxiliary:
+  feeds: {}
+
 # USDT dominance regime filter - OPTIONAL. Hypothesis only; every effect is switchable.
 # It can only TIGHTEN strategy gates in a RISING regime; it never touches the Risk Engine.
 usdtd:
@@ -113,6 +122,14 @@ backtesting:
     interval_bars: 25
     stop_atr_multiplier: 1.5
     risk_reward: 2.0
+
+# Paper-trading loop (python src/main.py paper). Replay-driven, deterministic, same fill model and
+# strategy/risk path as the backtester. PAPER ONLY - no exchange connectivity.
+paper:
+  state_directory: data/paper/     # state.json, history.csv, candles.csv, trades.csv, rejections.csv
+  warmup_bars: 0                   # history rows replayed on restart; 0 = all (exact resume)
+  allow_config_change: false       # refuse to resume state.json written with a different trading config
+  strategy: smc                    # smc | fixture
 
 improvement:
   enabled: false                # controlled, manual-approval-only for now

@@ -7,8 +7,14 @@ PAPER TRADING ONLY. This does not connect to any exchange.
                                   run the backtest engine on the local SYNTHETIC sample
                                   CSVs. 'fixture' = FixedIntervalTestStrategy (plumbing
                                   only). Results on synthetic data are meaningless.
+    python src/main.py paper [--reset] [--candles N] [--strategy smc|fixture] [--no-usdtd]
+                                  replay-driven PAPER-TRADING loop: feeds closed candles from
+                                  the CSV provider one at a time through the PaperTrader,
+                                  persisting state under paper.state_directory. Re-running
+                                  resumes where it stopped (already-seen candles are skipped).
 """
 
+import logging
 import sys
 from pathlib import Path
 
@@ -79,8 +85,66 @@ def run_backtest(config: dict, strategy_name: str = None):
     return result, strategy
 
 
+def run_paper(config: dict, strategy_name: str = None, reset: bool = False, limit: int = None):
+    """Replay the CSV provider through the PaperTrader (resumable). Returns the trader."""
+    from src.execution.paper_trader import PaperTrader  # lazy import (see src/execution/__init__.py)
+    name = strategy_name or config.get("paper", {}).get("strategy", "smc")
+    config.setdefault("paper", {})["strategy"] = name
+    data = CSVMarketData(directory=ROOT / config["data"]["directory"])
+    trader = PaperTrader(config, build_strategy(config, name), data_root=ROOT, reset=reset)
+    try:
+        reports = trader.run_replay(data, limit=limit)
+    finally:
+        trader.close()
+    return trader, reports
+
+
+def _setup_logging(config: dict) -> None:
+    lg = config.get("logging", {}) or {}
+    path = ROOT / lg.get("file", "data/bot.log")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(level=getattr(logging, str(lg.get("level", "INFO")).upper(), logging.INFO),
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                        handlers=[logging.FileHandler(path, encoding="utf-8")])
+
+
 def main() -> None:
     config = load_config()
+    if len(sys.argv) > 1 and sys.argv[1] == "paper":
+        args = sys.argv[2:]
+        name = args[args.index("--strategy") + 1] if "--strategy" in args else None
+        limit = int(args[args.index("--candles") + 1]) if "--candles" in args else None
+        if "--no-usdtd" in args:
+            config.setdefault("usdtd", {})["enabled"] = False
+        _setup_logging(config)
+        print("SMC Self-Improving Bot - PAPER trading (replay-driven, no exchange connection)")
+        print("NOTE: SYNTHETIC sample data; numbers are NOT trading performance.")
+        trader, reports = run_paper(config, name, reset="--reset" in args, limit=limit)
+        counts = {}
+        for r in reports:
+            counts[r.status] = counts.get(r.status, 0) + 1
+        st = trader.status()
+        print(f"  candles fed     : {len(reports)}  {counts}")
+        print(f"  last bar        : #{st['bar_index']} {st['last_timestamp']}")
+        print(f"  trades (session): {len(trader.journal.trades)}   rejections: {len(trader.journal.rejections)}"
+              f"   total trades: {st['total_trades']}")
+        p = st["portfolio"]
+        print(f"  equity          : {p['equity']:.2f}  ({p['return_pct']:+.2f}%)  cash {p['cash']:.2f}"
+              f"  position {p['position']:.6f}")
+        print(f"  risk            : dd {st['risk']['drawdown_pct']:.2f}%  daily {st['risk']['daily_pnl']:+.2f}"
+              f"  streak {st['risk']['consecutive_losses']}")
+        print(f"  strategy state  : {st['strategy_state']}   open position: {st['position'] is not None}"
+              f"   pending entry: {st['pending_entry'] is not None}")
+        if hasattr(trader.strategy, "diag"):
+            d = trader.strategy.diag
+            print(f"  strategy diag   : setups={d.setups_armed} buys={d.buy_signals} exits={d.exit_signals} "
+                  f"riskoff_skips={d.riskoff_skips} gate_failures={d.gate_failures}")
+        for w in st["warnings"]:
+            print(f"  WARNING         : {w}")
+        if st["halted"]:
+            print(f"  HALTED          : {st['halt_reason']}")
+        print(f"  state / logs    : {trader.state_dir}")
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "backtest":
         args = sys.argv[2:]
         name = args[args.index("--strategy") + 1] if "--strategy" in args else None

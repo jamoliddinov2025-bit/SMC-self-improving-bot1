@@ -6,7 +6,7 @@ future candles: it carries only bar i's indicator row, the SMC result as known
 at bar i, and the account snapshot. That is the anti-lookahead boundary.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol
 
 import pandas as pd
@@ -45,6 +45,8 @@ class BacktestContext:
     equity: float                 # mark-to-market at bar i close
     risk: Dict[str, Any]          # RiskState.snapshot()
     regime: Optional["RegimeState"] = None   # USDT.D regime as of the last CLOSED aux candle (None if unused)
+    aux: Dict[str, Any] = field(default_factory=dict)  # every named auxiliary feed's point-in-time state
+                                                       # (e.g. aux["usdtd"] is the same object as `regime`)
 
 
 class Strategy(Protocol):

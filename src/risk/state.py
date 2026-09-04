@@ -105,6 +105,39 @@ class RiskState:
             raise ValueError("no open position to close")
         self.open_positions -= 1
 
+    # ------------------------------------------------------------ persistence
+    def to_snapshot(self) -> Dict[str, Any]:
+        """Full JSON-serialisable state (superset of `snapshot()`), for restart recovery."""
+        return {
+            "starting_equity": self.starting_equity, "equity": self.equity, "peak_equity": self.peak_equity,
+            "day_start_equity": self.day_start_equity, "daily_pnl": self.daily_pnl,
+            "consecutive_losses": self.consecutive_losses, "open_positions": self.open_positions,
+            "current_day": self.current_day.isoformat() if hasattr(self.current_day, "isoformat") else self.current_day,
+            "last_streak_reset_reason": self.last_streak_reset_reason,
+        }
+
+    @classmethod
+    def from_snapshot(cls, snap: Dict[str, Any]) -> "RiskState":
+        import datetime as _dt
+        rs = cls(float(snap["starting_equity"]))
+        rs.equity = float(snap["equity"])
+        rs.peak_equity = float(snap["peak_equity"])
+        rs.day_start_equity = float(snap["day_start_equity"])
+        rs.daily_pnl = float(snap["daily_pnl"])
+        rs.consecutive_losses = int(snap["consecutive_losses"])
+        rs.open_positions = int(snap["open_positions"])
+        day = snap.get("current_day")
+        if isinstance(day, str):
+            try:
+                day = _dt.date.fromisoformat(day)
+            except ValueError:
+                pass
+        rs.current_day = day
+        rs.last_streak_reset_reason = snap.get("last_streak_reset_reason")
+        if rs.consecutive_losses < 0 or rs.open_positions < 0 or rs.equity < 0:
+            raise ValueError("corrupt risk snapshot")
+        return rs
+
     def snapshot(self) -> Dict[str, float]:
         return {
             "equity": self.equity,

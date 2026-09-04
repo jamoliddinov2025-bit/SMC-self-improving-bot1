@@ -24,13 +24,13 @@ config/
 data/
   sample/              # SYNTHETIC offline data: BTCUSDT_15m.csv, USDTD_4h.csv (see data/sample/README.md)
 src/
-  main.py              # entry point (paper demo, no strategy)
+  main.py              # entry point: demo | backtest | paper
   data/                # market-data interface + local CSV replay provider
   strategy/            # SMCEngine (structure analysis), POI logic, USDT.D regime, SMCStrategy (signals)
   indicators/          # EMA, ATR, volume + IndicatorEngine (pure functions, no signals)
   risk/                # position sizing, TradeValidator (kill switches), RiskState
-  execution/           # PaperBroker (simulated spot broker) and trade history
-  backtesting/         # point-in-time BacktestEngine, Strategy protocol, journal, metrics
+  execution/           # PaperBroker, PaperTrader (replay-driven paper loop), state store, candle log
+  backtesting/         # point-in-time BacktestEngine, Strategy protocol, aux feeds, journal, metrics
   improvement/         # controlled parameter improvement
 tests/
 requirements.txt
@@ -45,6 +45,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python src/main.py            # broker plumbing demo
 python src/main.py backtest [--strategy smc|fixture] [--no-usdtd]   # backtest on the synthetic sample
+python src/main.py paper [--reset] [--candles N] [--strategy smc|fixture] [--no-usdtd]   # paper-trading loop
 pytest
 ```
 
@@ -95,6 +96,42 @@ confluence score ≥ `min_confluence_score`; RR requirement +`rr_add`; volume th
 `NEUTRAL`, `UNKNOWN` and `enabled: false` are all identical to running without USDT.D. The regime never
 touches `RiskState` or bypasses `TradeValidator`.
 
+### Auxiliary data feeds (generic, point-in-time)
+
+`BacktestEngine` and `PaperTrader` accept any number of **named auxiliary series** (`AuxFeed`), each a
+`(timestamp, close)` frame with its own timeframe. Every feed is advanced with the rule *aux candle close
+time ≤ primary bar close time* and exposed to the strategy as `ctx.aux[<name>]`. The `usdtd:` block defines
+the feed named `usdtd`, whose consumer is the `USDTDRegimeDetector` (also exposed as `ctx.regime`); extra
+feeds (e.g. BTC.D, TOTAL3, DXY) can be declared under `auxiliary.feeds` and are exposed as raw
+`AuxPoint`s. **USDT.D is currently the only feed any strategy consumes.**
+
+### Paper trading (`python src/main.py paper`)
+
+`PaperTrader.process_candle(candle)` runs the backtester's per-bar steps once for **one closed candle**:
+advance aux feeds → fill the pending entry at this open through `TradeValidator` → `PaperBroker` (the
+backtester's own `try_enter`) → mechanical stop/target/requested-exit → `SMCEngine.update` → indicator
+row → `strategy.on_candle(BacktestContext)` → queue BUY for the next open / flag EXIT → risk
+mark-to-market → journals → atomic state write. Feeding a replay through it reproduces the
+`BacktestEngine` result exactly (tested for the fixture and SMC strategies, with and without USDT.D).
+
+The current CLI is **replay-driven** (it feeds the sample CSV); there is no exchange connection. Re-running
+the command resumes from `data/paper/state.json` and skips candles already processed.
+
+Files under `paper.state_directory` (default `data/paper/`, git-ignored):
+
+| File | Content |
+|---|---|
+| `state.json` | account, risk state (daily PnL, peak, streak), open position, pending entry, cursor, strategy state, config hash — written atomically after every candle |
+| `history.csv` | every accepted candle; replayed on restart to rebuild SMC structure and indicators (`paper.warmup_bars`, 0 = all for an exact resume) |
+| `candles.csv` | one row per candle: OHLCV, EMA/ATR/volume ratio, regime, new SMC events, strategy state, selected POI, gate failures, signal, risk decision, fill, position, cash/equity/PnL/drawdown/streak |
+| `trades.csv`, `rejections.csv` | the `TradeJournal` (round trips and every risk rejection) |
+
+Safety rules: malformed candles (non-finite, bad OHLC ordering, negative volume) are rejected before anything
+runs; duplicate / older timestamps are skipped; any exception halts the trader **without** writing state and
+drops the pending order, so a restart resumes from the last good candle. The only path into the broker is the
+Risk Engine. A `state.json` written with a different trading configuration is refused unless
+`paper.allow_config_change: true` (or `--reset`).
+
 ## Development stages
 
 | Step | Goal | Status |
@@ -106,7 +143,7 @@ touches `RiskState` or bypasses `TradeValidator`.
 | 5 | Risk engine: position sizing, trade validator, kill switches, risk state | ✅ done |
 | 6 | Backtesting engine + performance evaluation (fixture strategy only) | ✅ done |
 | 7 | SMC trading strategy (long-only) + optional USDT.D regime filter | ✅ done |
-| 8 | Paper-trading loop (strategy + broker) + trade logging | planned |
+| 8 | Paper-trading loop (replay-driven, resumable) + per-candle logging + generic aux feeds | ✅ done |
 | 9 | Controlled strategy improvement (bounded parameter changes, manual approval) | planned |
 
 ## Known limitations
@@ -116,6 +153,10 @@ touches `RiskState` or bypasses `TradeValidator`.
   data is a separate task.
 - **No stop modification yet** (break-even / trailing): the backtester has no "amend stop" signal.
 - USDT.D ↔ BTC relationship is unverified; defaults are conservative and every effect is switchable.
+- **Paper mode is replay-driven.** `python src/main.py paper` feeds the local CSV; a scheduled/live market-data
+  provider is a later, separate task. The loop itself only needs closed candles, one at a time.
+- A capped `paper.warmup_bars` rebuilds indicators/SMC from a shorter history on restart, so recursive values
+  (EMA, Wilder ATR) can differ slightly from an uninterrupted run; `0` (all history) is exact.
 
 - **Loss-streak lock has no automatic unlock yet.** When `consecutive_losses >= risk.max_consecutive_losses`
   the `TradeValidator` rejects all new trades. Since only a winning trade resets the streak and no trade can be

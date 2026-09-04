@@ -112,9 +112,6 @@ class PaperBroker:
     def unrealized_pnl(self, price: float) -> float:
         return (price - self.avg_entry_price) * self.position if self.position else 0.0
 
-    def total_fees(self) -> float:
-        return sum(t.fee for t in self.trades)
-
     def portfolio(self, price: float) -> Dict[str, float]:
         equity = self.equity(price)
         return {
@@ -131,6 +128,32 @@ class PaperBroker:
 
     def trade_history(self) -> List[Dict[str, Any]]:
         return [t.to_dict() for t in self.trades]
+
+    # ------------------------------------------------------------- persistence
+    def to_snapshot(self) -> Dict[str, Any]:
+        """JSON-serialisable account state (trade history is kept in the CSV journal, not here)."""
+        return {
+            "starting_cash": self.starting_cash, "cash": self.cash, "fee_rate": self.fee_rate,
+            "symbol": self.symbol, "position": self.position, "avg_entry_price": self.avg_entry_price,
+            "realized_pnl": self.realized_pnl, "fees_paid": self.total_fees(), "trade_count": len(self.trades),
+        }
+
+    @classmethod
+    def from_snapshot(cls, snap: Dict[str, Any]) -> "PaperBroker":
+        b = cls(float(snap["starting_cash"]), float(snap["fee_rate"]) * 100.0, snap.get("symbol", "BTC/USDT"))
+        b.cash = float(snap["cash"])
+        b.position = float(snap["position"])
+        b.avg_entry_price = float(snap["avg_entry_price"])
+        b.realized_pnl = float(snap.get("realized_pnl", 0.0))
+        b._restored_fees = float(snap.get("fees_paid", 0.0))
+        b._restored_trades = int(snap.get("trade_count", 0))
+        if b.cash < -1e-6 or b.position < 0:   # same float-dust tolerance as buy()
+            raise ValueError("corrupt broker snapshot: negative cash or position")
+        return b
+
+    def total_fees(self) -> float:
+        """Fees paid over the account's life, including fees restored from a snapshot."""
+        return getattr(self, "_restored_fees", 0.0) + sum(t.fee for t in self.trades)
 
     # ---------------------------------------------------------------- helpers
     def _record(self, timestamp, side, price, quantity, notional, fee, pnl) -> Trade:

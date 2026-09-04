@@ -7,6 +7,7 @@ venv/
 *.egg-info/
 
 # Data, logs and generated results (keep the folder, not the contents)
+# data/paper/ (paper-trading state, history and logs) is covered by this rule too
 data/*
 !data/.gitkeep
 !data/sample/

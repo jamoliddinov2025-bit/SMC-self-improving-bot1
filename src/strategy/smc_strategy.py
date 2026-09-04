@@ -34,8 +34,10 @@ second risk system exists here.
 """
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
+
+import pandas as pd
 
 from src.backtesting.strategy import BUY, EXIT, BacktestContext, Signal
 from src.strategy.poi import (
@@ -186,6 +188,7 @@ class SMCStrategy:
         self._bos_vol: Dict[int, float] = {}       # bos.detected_index -> volume ratio on that bar
         self._handled_bos: Optional[BOSEvent] = None   # last BOS that produced (or failed to produce) a setup
         self.diag = StrategyDiagnostics()
+        self.last_poi: Optional[POI] = None            # POI touched on the last on_candle call (reporting only)
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "SMCStrategy":
@@ -197,6 +200,7 @@ class SMCStrategy:
         i = ctx.index
         smc = ctx.smc
         c = ctx.candle
+        self.last_poi = None
 
         # --- reconcile with the engine's actual position state
         if self.state == IN_TRADE and not ctx.has_position:
@@ -278,6 +282,7 @@ class SMCStrategy:
         poi = select_poi(self.setup, c.low, c.close, list(cfg.poi_priority))
         if poi is None:
             return None
+        self.last_poi = poi
 
         # --- gate G(part): risk-off "wait for the dip"
         regime = _regime_of(ctx, cfg)
@@ -296,6 +301,7 @@ class SMCStrategy:
                 poi = select_poi(self.setup, c.low, c.close, list(cfg.poi_priority))  # deeper zone touched too?
                 if poi is None:
                     return None
+                self.last_poi = poi
 
         # --- indicators sanity (E4)
         if atr is None or atr <= 0:
@@ -368,6 +374,81 @@ class SMCStrategy:
                   f"regime={regime.value if regime else 'NONE'}")
         return Signal(BUY, stop_loss=stop, take_profit=target, reason=reason)
 
+    # ----------------------------------------------------------- persistence
+    def to_snapshot(self) -> Dict[str, Any]:
+        """JSON-serialisable state for restart recovery (Step 8). Bar indices are stored as-is;
+        `restore_snapshot` shifts them by `index_shift` when the SMC engine was rebuilt from a
+        shorter history. BOS events are referenced by key and relinked to the rebuilt SMC result."""
+        def trade(t: Optional[_Trade]):
+            return None if t is None else asdict(t)
+
+        setup = None
+        if self.setup is not None:
+            setup = {
+                "trigger_bos": bos_key(self.setup.trigger_bos),
+                "trigger_index": self.setup.trigger_index,
+                "impulse_start_index": self.setup.impulse_start_index,
+                "bos_volume_ratio": self.setup.bos_volume_ratio,
+                "entries": self.setup.entries,
+                "pois": [{**asdict(p), "timestamp": _ts_str(p.timestamp)} for p in self.setup.pois],
+            }
+        return {
+            "state": self.state,
+            "setup": setup,
+            "trade": trade(self.trade),
+            "pending_entry": trade(self._pending_entry),
+            "last_exit_index": self.last_exit_index,
+            "seen_bos": self._seen_bos,
+            "bos_vol": {str(k): v for k, v in self._bos_vol.items()},
+            "handled_bos": bos_key(self._handled_bos) if self._handled_bos is not None else None,
+            "diag": asdict(self.diag),
+        }
+
+    def restore_snapshot(self, snap: Dict[str, Any], smc, index_shift: int = 0) -> List[str]:
+        """Restore from `to_snapshot()` against a rebuilt SMC result. Returns a list of warnings
+        (e.g. a trigger BOS that no longer exists in the rebuilt history -> setup dropped)."""
+        warnings: List[str] = []
+        sh = int(index_shift)
+        by_key = {bos_key(b): b for b in smc.bos_events}
+
+        def trade(d):
+            if d is None:
+                return None
+            t = _Trade(**d)
+            t.entry_index += sh
+            return t
+
+        self.state = snap["state"]
+        self.trade = trade(snap.get("trade"))
+        self._pending_entry = trade(snap.get("pending_entry"))
+        self.last_exit_index = int(snap["last_exit_index"]) + sh
+        self._bos_vol = {int(k) + sh: float(v) for k, v in (snap.get("bos_vol") or {}).items()}
+        self._seen_bos = len(smc.bos_events)   # everything currently in the rebuilt result is "seen"
+        self.diag = StrategyDiagnostics(**snap.get("diag", {})) if snap.get("diag") else StrategyDiagnostics()
+
+        hk = snap.get("handled_bos")
+        self._handled_bos = by_key.get(hk) if hk else None
+        if hk and self._handled_bos is None:
+            warnings.append(f"handled BOS {hk} not found in rebuilt SMC history")
+
+        self.setup = None
+        sd = snap.get("setup")
+        if sd is not None:
+            bos = by_key.get(sd["trigger_bos"])
+            if bos is None:
+                warnings.append(f"setup trigger BOS {sd['trigger_bos']} not found in rebuilt SMC history; setup dropped")
+                if self.state == ARMED:
+                    self.state = IDLE
+            else:
+                pois = []
+                for pd_ in sd["pois"]:
+                    d = dict(pd_)
+                    d["created_index"] = int(d["created_index"]) + sh
+                    pois.append(POI(**d))
+                self.setup = Setup(bos, int(sd["trigger_index"]) + sh, int(sd["impulse_start_index"]) + sh,
+                                   pois, sd.get("bos_volume_ratio"), int(sd.get("entries", 0)))
+        return warnings
+
     # --------------------------------------------------------------- helpers
     def _drop_setup(self) -> None:
         self.setup = None
@@ -390,6 +471,18 @@ class SMCStrategy:
         if cfg.tp_mode == TP_STRUCTURE:
             return structural if structural is not None else fixed
         return max(structural, fixed) if structural is not None else fixed
+
+
+def bos_key(b: BOSEvent) -> str:
+    """Stable identity of a BOS event across engine rebuilds (independent of bar indices)."""
+    return f"{b.direction}|{_ts_str(b.timestamp)}|{b.broken_swing_price!r}|{int(b.is_choch)}"
+
+
+def _ts_str(ts: Any) -> str:
+    try:
+        return pd.Timestamp(ts).isoformat()
+    except (TypeError, ValueError):
+        return str(ts)
 
 
 def _latest_bullish_bos(smc) -> Optional[BOSEvent]:

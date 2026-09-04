@@ -27,7 +27,7 @@ indicator tests assert and the anti-lookahead tests here re-check.
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -40,7 +40,13 @@ from src.backtesting.journal import (
     TradeJournal,
     TradeRecord,
 )
-from src.backtesting.aux_data import align_aux_indices, aux_filename, coerce_aux_frame
+from src.backtesting.aux_data import (
+    REGIME_FEED,
+    AuxFeed,
+    AuxReplayer,
+    build_aux_feeds,
+    timeframe_to_timedelta,
+)
 from src.backtesting.metrics import compute_metrics
 from src.backtesting.result import BacktestResult
 from src.backtesting.strategy import BUY, EXIT, BacktestContext, Signal, Strategy
@@ -125,12 +131,15 @@ class _OpenPosition:
 class BacktestEngine:
     def __init__(self, config: BacktestConfig, strategy: Strategy, indicator_engine: IndicatorEngine,
                  smc_factory, validator: TradeValidator, run_id: str = "backtest",
-                 regime_config: Optional[RegimeConfig] = None, aux_df: Optional[pd.DataFrame] = None):
+                 regime_config: Optional[RegimeConfig] = None, aux_df: Optional[pd.DataFrame] = None,
+                 aux_feeds: Optional[List[AuxFeed]] = None):
         """`smc_factory` is a zero-arg callable returning a fresh SMCEngine (engines are stateful).
 
-        `regime_config` + `aux_df` (timestamp/close of e.g. USDT.D) are optional. When both are
-        given and `regime_config.enabled`, the engine steps a USDTDRegimeDetector with each aux
-        candle *after it has closed* relative to the primary bar and exposes `ctx.regime`.
+        Auxiliary data is generic: `aux_feeds` is a list of named point-in-time feeds (see
+        aux_data.py). Each feed is stepped with the aux candles that have CLOSED by the primary
+        bar's close and exposed on `ctx.aux[name]`; the feed named REGIME_FEED ("usdtd") also
+        populates `ctx.regime`. `regime_config` + `aux_df` remain as a shorthand for that single
+        USDT.D feed.
         """
         self.cfg = config
         self.strategy = strategy
@@ -138,21 +147,29 @@ class BacktestEngine:
         self.smc_factory = smc_factory
         self.validator = validator
         self.run_id = run_id
-        self.regime_config = regime_config
-        self.aux_df = coerce_aux_frame(aux_df) if aux_df is not None else None
+        feeds = list(aux_feeds or [])
+        if regime_config is not None and regime_config.enabled and aux_df is not None:
+            if any(f.name == REGIME_FEED for f in feeds):
+                raise ValueError("pass the USDT.D feed either via aux_feeds or regime_config/aux_df, not both")
+            feeds.append(AuxFeed(REGIME_FEED, regime_config.symbol, regime_config.timeframe, aux_df,
+                                 lambda rc=regime_config: USDTDRegimeDetector(rc)))
+        self.aux_feeds: List[AuxFeed] = feeds
+        regime_feed = next((f for f in feeds if f.name == REGIME_FEED), None)
+        self.regime_config = regime_config if regime_feed is not None else None
+        self.aux_df = regime_feed.frame if regime_feed is not None else None
 
     @classmethod
     def from_config(cls, config: Dict[str, Any], strategy: Strategy, run_id: str = "backtest",
-                    aux_df: Optional[pd.DataFrame] = None, data_root: Optional[Path] = None) -> "BacktestEngine":
-        """If `usdtd.enabled` and no `aux_df` is passed, the USDT.D CSV is loaded from
-        `<data_root>/<data.directory>/<SYMBOL>_<tf>.csv` (e.g. data/sample/USDTD_4h.csv)."""
+                    aux_df: Optional[pd.DataFrame] = None, data_root: Optional[Path] = None,
+                    aux_frames: Optional[Dict[str, pd.DataFrame]] = None) -> "BacktestEngine":
+        """Builds every enabled auxiliary feed from config (`usdtd:` -> feed "usdtd", plus
+        `auxiliary.feeds`). CSVs are read from `<data_root>/<data.directory>/<SYMBOL>_<tf>.csv`
+        unless a frame is supplied in `aux_frames[name]` (or `aux_df` for the USDT.D feed)."""
         rc = RegimeConfig.from_config(config)
-        if rc.enabled and aux_df is None:
-            root = Path(data_root) if data_root is not None else Path.cwd()
-            path = root / config["data"]["directory"] / aux_filename(rc.symbol, rc.timeframe)
-            if not path.exists():
-                raise FileNotFoundError(f"usdtd.enabled is true but {path} does not exist")
-            aux_df = pd.read_csv(path)
+        frames = dict(aux_frames or {})
+        if aux_df is not None and rc.enabled:
+            frames.setdefault(REGIME_FEED, aux_df)
+        feeds = build_aux_feeds(config, data_root=data_root, frames=frames)
         return cls(
             BacktestConfig.from_config(config),
             strategy,
@@ -161,7 +178,7 @@ class BacktestEngine:
             TradeValidator.from_config(config),
             run_id,
             regime_config=rc if rc.enabled else None,
-            aux_df=aux_df if rc.enabled else None,
+            aux_feeds=feeds,
         )
 
     # ------------------------------------------------------------------ API
@@ -192,28 +209,20 @@ class BacktestEngine:
         candles = [Candle(r.timestamp, float(r.open), float(r.high), float(r.low), float(r.close), float(r.volume))
                    for r in df.itertuples(index=False)]
 
-        # optional auxiliary regime series, aligned to the last CLOSED aux candle per primary bar
-        detector: Optional[USDTDRegimeDetector] = None
-        aux_idx = None
-        aux_fed = -1
-        use_regime = self.regime_config is not None and self.regime_config.enabled and self.aux_df is not None
-        if use_regime and n:
-            detector = USDTDRegimeDetector(self.regime_config)
-            aux_idx = align_aux_indices(df["timestamp"], self.cfg.timeframe, self.aux_df["timestamp"],
-                                        self.regime_config.timeframe).to_numpy()
+        # optional auxiliary feeds, each stepped only with aux candles CLOSED by the primary bar's close
+        replayers: List[AuxReplayer] = [f.replayer() for f in self.aux_feeds] if n else []
+        tf_delta = timeframe_to_timedelta(self.cfg.timeframe) if replayers else None
 
         for i, c in enumerate(candles):
             risk.new_day(_day_of(c.timestamp))
 
-            # 0. step the regime detector with aux candles that have closed by now (never beyond)
-            regime_state = None
-            if detector is not None:
-                target_idx = int(aux_idx[i])
-                while aux_fed < target_idx:
-                    aux_fed += 1
-                    row = self.aux_df.iloc[aux_fed]
-                    detector.update(row["timestamp"], row["close"])
-                regime_state = detector.state if aux_fed >= 0 else None
+            # 0. advance every auxiliary feed to this bar's close time (never beyond)
+            aux_state: Dict[str, Any] = {}
+            if replayers:
+                close_time = pd.Timestamp(c.timestamp) + tf_delta
+                for r in replayers:
+                    aux_state[r.name] = r.advance(close_time)
+            regime_state = aux_state.get(REGIME_FEED)
 
             # 1. pending entry fills at this open
             if pending_entry is not None and pos is None:
@@ -235,7 +244,7 @@ class BacktestEngine:
             # 4-5. strategy sees bar i only
             equity_now = broker.equity(c.close)
             ctx = BacktestContext(i, c, ind_rows.iloc[i], smc.result, pos is not None, equity_now, risk.snapshot(),
-                                  regime=regime_state)
+                                  regime=regime_state, aux=aux_state)
             signal = self.strategy.on_candle(ctx)
 
             # 6. route signal
@@ -274,6 +283,20 @@ class BacktestEngine:
         metrics["broker_total_fees"] = broker.total_fees()
         return BacktestResult(self.run_id, self.cfg.symbol, self.cfg.timeframe, journal, curve_df, metrics,
                               self.cfg.to_dict())
+
+    # ------------------------------------------------- fill model (shared with PaperTrader)
+    def try_enter(self, *args, **kwargs):
+        """Public alias of `_try_enter` - the PaperTrader uses the very same fill/risk path."""
+        return self._try_enter(*args, **kwargs)
+
+    def check_exit(self, pos: "_OpenPosition", c: Candle):
+        return self._check_exit(pos, c)
+
+    def close_position(self, *args, **kwargs) -> None:
+        return self._close(*args, **kwargs)
+
+    def slip(self, price: float, adverse_up: bool, enabled: bool) -> float:
+        return self._slip(price, adverse_up, enabled)
 
     # -------------------------------------------------------------- internals
     def _prepare(self, df: pd.DataFrame) -> pd.DataFrame:

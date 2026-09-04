@@ -84,3 +84,42 @@ def test_filename_and_frame_coercion():
     assert list(out.columns) == ["timestamp", "close"] and out["close"].tolist() == [1.0, 2.0]
     with pytest.raises(ValueError):
         coerce_aux_frame(pd.DataFrame({"timestamp": ["2024-01-01"]}))
+
+
+# ------------------------------------------------------------ generic feeds (Step 8)
+from src.backtesting.aux_data import AuxFeed, AuxPoint, aux_specs_from_config  # noqa: E402
+from src.main import load_config  # noqa: E402
+
+
+def test_aux_replayer_matches_vectorised_alignment():
+    primary = ts(pd.date_range("2024-01-01", periods=40, freq="15min", tz="UTC"))
+    aux = pd.DataFrame({"timestamp": pd.date_range("2024-01-01", periods=4, freq="4h", tz="UTC"),
+                        "close": [1.0, 2.0, 3.0, 4.0]})
+    expected = align_aux_indices(primary, "15m", aux["timestamp"], "4h").tolist()
+    rep = AuxFeed("x", "X", "4h", aux).replayer()
+    got = []
+    for t in primary:
+        st = rep.advance(t + pd.Timedelta(minutes=15))
+        got.append(-1 if st is None else st.index)
+        assert st is None or (isinstance(st, AuxPoint) and st.close == aux["close"][st.index])
+    assert got == expected
+    assert got[14] == -1 and got[15] == 0        # bar opening 03:45 closes 04:00 -> candle [00:00,04:00) visible
+
+
+def test_aux_replayer_equal_close_timestamps_visible_and_never_regresses():
+    aux = pd.DataFrame({"timestamp": ts(["2024-01-01 00:00"]), "close": [1.0]})
+    rep = AuxFeed("x", "X", "4h", aux).replayer()
+    assert rep.advance(pd.Timestamp("2024-01-01 03:59", tz="UTC")) is None
+    st = rep.advance(pd.Timestamp("2024-01-01 04:00", tz="UTC"))   # equal close time -> visible
+    assert st.index == 0
+    assert rep.advance(pd.Timestamp("2024-01-01 02:00", tz="UTC")).index == 0   # cursor never moves backwards
+
+
+def test_aux_specs_from_config_reserved_name_and_extra_feeds():
+    cfg = load_config()
+    specs = aux_specs_from_config(cfg)
+    assert [s.name for s in specs] == ["usdtd"] and specs[0].consumer == "usdtd_regime"
+    cfg["auxiliary"] = {"feeds": {"total3": {"symbol": "TOTAL3", "timeframe": "1d", "enabled": False}}}
+    specs = aux_specs_from_config(cfg)
+    assert [(s.name, s.symbol, s.timeframe, s.enabled, s.consumer) for s in specs[1:]] == \
+           [("total3", "TOTAL3", "1d", False, None)]
